@@ -7,8 +7,26 @@ const { pool } = require("../config/db");
 // Default bundle price if not set
 const DEFAULT_BUNDLE_PRICE = 6.00;
 
-// Platform fee percentage (UniClips keeps 20%, scholar gets 80%)
-const PLATFORM_FEE_PERCENT = 20;
+// Platform fee structure:
+// - First 100 sales: UniClips keeps 30%, scholar gets 70%
+// - After 100 sales: UniClips keeps 50%, scholar gets 50%
+const PLATFORM_FEE_FIRST_100 = 30;
+const PLATFORM_FEE_AFTER_100 = 50;
+const SALES_THRESHOLD = 100;
+
+/**
+ * Calculate platform fee percentage based on total course sales
+ */
+const calculatePlatformFee = async (subjectId, scholarId) => {
+  const [salesResult] = await pool.query(
+    'SELECT COUNT(*) as total_sales FROM subject_purchases WHERE subject_id = ? AND scholar_id = ?',
+    [subjectId, scholarId]
+  );
+  const totalSales = salesResult[0]?.total_sales || 0;
+  
+  // First 100 sales: 30%, after that: 50%
+  return totalSales < SALES_THRESHOLD ? PLATFORM_FEE_FIRST_100 : PLATFORM_FEE_AFTER_100;
+};
 
 /**
  * Create Stripe Checkout Session for subject bundle (Marketplace model)
@@ -54,9 +72,12 @@ const createCheckoutSession = async (req, res) => {
     );
     const scholarName = scholarUser[0] ? `${scholarUser[0].fname} ${scholarUser[0].lname}` : 'Scholar';
 
+    // Calculate dynamic platform fee based on total course sales
+    const platformFeePercent = await calculatePlatformFee(subjectId, scholarId);
+    
     // Calculate amounts
     const totalAmountCents = Math.round(bundlePrice * 100);
-    const platformFeeCents = Math.round(totalAmountCents * (PLATFORM_FEE_PERCENT / 100));
+    const platformFeeCents = Math.round(totalAmountCents * (platformFeePercent / 100));
     const scholarAmountCents = totalAmountCents - platformFeeCents;
 
     // Build checkout session config
@@ -81,6 +102,7 @@ const createCheckoutSession = async (req, res) => {
         scholarId: scholarId.toString(),
         type: 'subject_bundle',
         bundlePrice: bundlePrice.toString(),
+        platformFeePercent: platformFeePercent.toString(),
         platformFee: (platformFeeCents / 100).toString(),
         scholarAmount: (scholarAmountCents / 100).toString(),
       },
@@ -190,9 +212,10 @@ const createSubjectPaymentIntent = async (req, res) => {
     const scholarStripeAccountId = scholarProfile[0]?.stripe_account_id;
     const scholarOnboardingComplete = scholarProfile[0]?.stripe_onboarding_complete;
 
-    // Calculate platform fee
+    // Calculate dynamic platform fee based on total course sales
+    const platformFeePercent = await calculatePlatformFee(subjectId, scholarId);
     const totalAmountCents = Math.round(bundlePrice * 100);
-    const platformFeeCents = Math.round(totalAmountCents * (PLATFORM_FEE_PERCENT / 100));
+    const platformFeeCents = Math.round(totalAmountCents * (platformFeePercent / 100));
 
     // Build payment intent config
     const paymentIntentConfig = {
@@ -203,7 +226,8 @@ const createSubjectPaymentIntent = async (req, res) => {
         subjectId: subjectId.toString(),
         scholarId: scholarId.toString(),
         type: "subject_bundle",
-        bundlePrice: bundlePrice.toString()
+        bundlePrice: bundlePrice.toString(),
+        platformFeePercent: platformFeePercent.toString()
       },
     };
 
