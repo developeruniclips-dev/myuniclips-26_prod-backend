@@ -32,7 +32,23 @@ const ScholarSubjectModel = {
 
     getScholarSubjectsStatus: (scholar_user_id) => {
         return pool.query(
-            "SELECT subject_id, subject_name, degree, expertise, approved FROM scholar_subjects WHERE scholar_user_id = ?",
+            `SELECT 
+                ss.subject_id, 
+                ss.subject_name, 
+                ss.degree, 
+                ss.expertise, 
+                ss.approved,
+                s.bundle_price,
+                COALESCE(sp_stats.sales_count, 0) as sales_count,
+                COALESCE(sp_stats.total_revenue, 0) as total_revenue
+            FROM scholar_subjects ss
+            LEFT JOIN subjects s ON ss.subject_id = s.id
+            LEFT JOIN (
+                SELECT subject_id, scholar_id, COUNT(*) as sales_count, SUM(amount) as total_revenue
+                FROM subject_purchases
+                GROUP BY subject_id, scholar_id
+            ) sp_stats ON ss.subject_id = sp_stats.subject_id AND ss.scholar_user_id = sp_stats.scholar_id
+            WHERE ss.scholar_user_id = ?`,
             [scholar_user_id]
         );
     },

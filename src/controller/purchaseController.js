@@ -485,7 +485,8 @@ const getAllTransactions = async (req, res) => {
   try {
     const { pool } = require("../config/db");
     
-    const [transactions] = await pool.query(`
+    // Get individual video purchases (legacy)
+    const [videoPurchases] = await pool.query(`
       SELECT 
         t.id as transaction_id,
         t.provider,
@@ -504,7 +505,8 @@ const getAllTransactions = async (req, res) => {
         v.title as video_title,
         v.scholar_user_id,
         s.fname as scholar_fname,
-        s.lname as scholar_lname
+        s.lname as scholar_lname,
+        'video' as purchase_type
       FROM transactions t
       LEFT JOIN purchases p ON t.purchase_id = p.id
       LEFT JOIN users u ON p.buyer_user_id = u.id
@@ -513,9 +515,43 @@ const getAllTransactions = async (req, res) => {
       ORDER BY t.created_at DESC
     `);
 
+    // Get course bundle purchases
+    const [bundlePurchases] = await pool.query(`
+      SELECT 
+        sp.id as transaction_id,
+        'stripe' as provider,
+        sp.transaction_id as provider_transaction_id,
+        'completed' as status,
+        sp.created_at as transaction_date,
+        sp.id as purchase_id,
+        sp.amount,
+        sp.currency,
+        sp.created_at as purchase_date,
+        buyer.id as buyer_id,
+        buyer.fname as buyer_fname,
+        buyer.lname as buyer_lname,
+        buyer.email as buyer_email,
+        NULL as video_id,
+        subj.name as video_title,
+        sp.scholar_id as scholar_user_id,
+        scholar.fname as scholar_fname,
+        scholar.lname as scholar_lname,
+        'bundle' as purchase_type
+      FROM subject_purchases sp
+      JOIN users buyer ON sp.buyer_user_id = buyer.id
+      JOIN users scholar ON sp.scholar_id = scholar.id
+      JOIN subjects subj ON sp.subject_id = subj.id
+      ORDER BY sp.created_at DESC
+    `);
+
+    // Combine and sort by date
+    const allTransactions = [...videoPurchases, ...bundlePurchases].sort(
+      (a, b) => new Date(b.transaction_date) - new Date(a.transaction_date)
+    );
+
     res.json({
       message: "Transactions fetched successfully",
-      transactions
+      transactions: allTransactions
     });
 
   } catch (err) {
