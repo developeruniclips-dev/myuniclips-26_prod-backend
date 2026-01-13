@@ -465,11 +465,24 @@ const getScholarEarnings = async (req, res) => {
             WHERE sp.scholar_id = ?
         `, [scholarUserId]);
 
+        // Current month bundle sales
+        const [monthlyBundleSalesData] = await pool.query(`
+            SELECT 
+                COUNT(sp.id) as monthly_sales,
+                COALESCE(SUM(sp.amount), 0) as monthly_revenue
+            FROM subject_purchases sp
+            WHERE sp.scholar_id = ? 
+            AND MONTH(sp.created_at) = MONTH(CURRENT_DATE())
+            AND YEAR(sp.created_at) = YEAR(CURRENT_DATE())
+        `, [scholarUserId]);
+
         // Combine both
         const videoSales = parseInt(videoSalesData[0]?.total_sales) || 0;
         const videoRevenue = parseFloat(videoSalesData[0]?.total_revenue) || 0;
         const bundleSales = parseInt(bundleSalesData[0]?.total_sales) || 0;
         const bundleRevenue = parseFloat(bundleSalesData[0]?.total_revenue) || 0;
+        const monthlySales = parseInt(monthlyBundleSalesData[0]?.monthly_sales) || 0;
+        const monthlyRevenue = parseFloat(monthlyBundleSalesData[0]?.monthly_revenue) || 0;
 
         // Get sales by course (bundles)
         const [salesByCourse] = await pool.query(`
@@ -526,6 +539,9 @@ const getScholarEarnings = async (req, res) => {
         }
         
         const pendingBalance = scholarEarnings - totalPaid;
+        
+        // Calculate monthly earnings (70% of monthly revenue for under 100 sales)
+        const monthlyEarnings = monthlySales <= 100 ? monthlyRevenue * 0.70 : monthlyRevenue * 0.50;
 
         res.json({
             summary: {
@@ -538,7 +554,11 @@ const getScholarEarnings = async (req, res) => {
                 payoutCount: parseInt(payoutsData[0]?.payout_count) || 0,
                 // Breakdown
                 videoSales: videoSales,
-                bundleSales: bundleSales
+                bundleSales: bundleSales,
+                // Monthly data
+                monthlySales: monthlySales,
+                monthlyRevenue: monthlyRevenue.toFixed(2),
+                monthlyEarnings: monthlyEarnings.toFixed(2)
             },
             salesByCourse: salesByCourse.map(c => ({
                 id: c.id,
