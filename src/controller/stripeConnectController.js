@@ -491,7 +491,11 @@ const getScholarEarnings = async (req, res) => {
                 s.name as course_name,
                 s.bundle_price,
                 COUNT(sp.id) as sales_count,
-                COALESCE(SUM(sp.amount), 0) as course_revenue
+                COALESCE(SUM(sp.amount), 0) as course_revenue,
+                SUM(CASE WHEN MONTH(sp.created_at) = MONTH(CURRENT_DATE()) 
+                         AND YEAR(sp.created_at) = YEAR(CURRENT_DATE()) THEN 1 ELSE 0 END) as monthly_sales,
+                COALESCE(SUM(CASE WHEN MONTH(sp.created_at) = MONTH(CURRENT_DATE()) 
+                         AND YEAR(sp.created_at) = YEAR(CURRENT_DATE()) THEN sp.amount ELSE 0 END), 0) as monthly_revenue
             FROM subjects s
             LEFT JOIN subject_purchases sp ON s.id = sp.subject_id AND sp.scholar_id = ?
             JOIN scholar_subjects ss ON s.id = ss.subject_id AND ss.scholar_user_id = ?
@@ -560,13 +564,21 @@ const getScholarEarnings = async (req, res) => {
                 monthlyRevenue: monthlyRevenue.toFixed(2),
                 monthlyEarnings: monthlyEarnings.toFixed(2)
             },
-            salesByCourse: salesByCourse.map(c => ({
-                id: c.id,
-                courseName: c.course_name,
-                bundlePrice: parseFloat(c.bundle_price || 0).toFixed(2),
-                salesCount: parseInt(c.sales_count) || 0,
-                revenue: parseFloat(c.course_revenue || 0).toFixed(2)
-            })),
+            salesByCourse: salesByCourse.map(c => {
+                const courseMonthlySales = parseInt(c.monthly_sales) || 0;
+                const courseMonthlyRevenue = parseFloat(c.monthly_revenue) || 0;
+                const courseMonthlyEarnings = courseMonthlySales <= 100 ? courseMonthlyRevenue * 0.70 : courseMonthlyRevenue * 0.50;
+                return {
+                    id: c.id,
+                    courseName: c.course_name,
+                    bundlePrice: parseFloat(c.bundle_price || 0).toFixed(2),
+                    salesCount: parseInt(c.sales_count) || 0,
+                    revenue: parseFloat(c.course_revenue || 0).toFixed(2),
+                    monthlySales: courseMonthlySales,
+                    monthlyRevenue: courseMonthlyRevenue.toFixed(2),
+                    monthlyEarnings: courseMonthlyEarnings.toFixed(2)
+                };
+            }),
             payoutHistory: payoutHistory.map(p => ({
                 id: p.id,
                 amount: parseFloat(p.amount).toFixed(2),
