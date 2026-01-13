@@ -57,14 +57,23 @@ const createCheckoutSession = async (req, res) => {
       : DEFAULT_BUNDLE_PRICE;
     const subjectName = subject?.name || "Course Bundle";
 
-    // Get scholar's Stripe connected account
-    const [scholarProfile] = await pool.query(
-      'SELECT stripe_account_id, stripe_onboarding_complete FROM scholar_profile WHERE user_id = ?',
-      [scholarId]
-    );
+    // Get scholar's Stripe connected account (handle missing columns gracefully)
+    let scholarProfile;
+    try {
+      [scholarProfile] = await pool.query(
+        'SELECT stripe_account_id, stripe_onboarding_complete FROM scholar_profile WHERE user_id = ?',
+        [scholarId]
+      );
+    } catch (dbError) {
+      console.warn('Extended stripe columns not found, using basic query:', dbError.message);
+      [scholarProfile] = await pool.query(
+        'SELECT stripe_account_id FROM scholar_profile WHERE user_id = ?',
+        [scholarId]
+      );
+    }
 
     const scholarStripeAccountId = scholarProfile[0]?.stripe_account_id;
-    const scholarOnboardingComplete = scholarProfile[0]?.stripe_onboarding_complete;
+    const scholarOnboardingComplete = scholarProfile[0]?.stripe_onboarding_complete || false;
 
     // Get scholar name for display
     const [scholarUser] = await pool.query(
@@ -230,14 +239,23 @@ const createSubjectPaymentIntent = async (req, res) => {
       ? parseFloat(subjectRows[0].bundle_price) 
       : DEFAULT_BUNDLE_PRICE;
 
-    // Get scholar's Stripe connected account
-    const [scholarProfile] = await pool.query(
-      'SELECT stripe_account_id, stripe_onboarding_complete FROM scholar_profile WHERE user_id = ?',
-      [scholarId]
-    );
+    // Get scholar's Stripe connected account (handle missing columns gracefully)
+    let scholarProfile;
+    try {
+      [scholarProfile] = await pool.query(
+        'SELECT stripe_account_id, stripe_onboarding_complete FROM scholar_profile WHERE user_id = ?',
+        [scholarId]
+      );
+    } catch (dbError) {
+      console.warn('Extended stripe columns not found, using basic query:', dbError.message);
+      [scholarProfile] = await pool.query(
+        'SELECT stripe_account_id FROM scholar_profile WHERE user_id = ?',
+        [scholarId]
+      );
+    }
 
     const scholarStripeAccountId = scholarProfile[0]?.stripe_account_id;
-    const scholarOnboardingComplete = scholarProfile[0]?.stripe_onboarding_complete;
+    const scholarOnboardingComplete = scholarProfile[0]?.stripe_onboarding_complete || false;
 
     // Calculate dynamic platform fee based on total course sales
     const platformFeePercent = await calculatePlatformFee(subjectId, scholarId);

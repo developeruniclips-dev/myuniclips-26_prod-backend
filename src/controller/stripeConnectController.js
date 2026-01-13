@@ -1,17 +1,34 @@
 const stripe = require('../config/stripe');
 const { pool } = require('../config/db');
 
+// Helper to check if Stripe and required env vars are configured
+const checkStripeConfiguration = () => {
+    const errors = [];
+    
+    if (!process.env.STRIPE_SECRET_KEY || 
+        process.env.STRIPE_SECRET_KEY.includes('dummy') ||
+        !process.env.STRIPE_SECRET_KEY.startsWith('sk_')) {
+        errors.push('STRIPE_SECRET_KEY is not configured properly');
+    }
+    
+    if (!process.env.FRONTEND_URL) {
+        errors.push('FRONTEND_URL is not configured');
+    }
+    
+    return errors;
+};
+
 /**
  * Create Stripe Connect Account and Onboarding Link for Scholar
  */
 const createConnectAccount = async (req, res) => {
     try {
         // Check if Stripe is properly configured
-        if (!process.env.STRIPE_SECRET_KEY || 
-            process.env.STRIPE_SECRET_KEY.includes('dummy') ||
-            !process.env.STRIPE_SECRET_KEY.startsWith('sk_')) {
+        const configErrors = checkStripeConfiguration();
+        if (configErrors.length > 0) {
+            console.error('Stripe configuration errors:', configErrors);
             return res.status(503).json({ 
-                message: 'Stripe is not configured. Please add valid STRIPE_SECRET_KEY to environment variables.' 
+                message: 'Stripe is not configured properly. Missing: ' + configErrors.join(', ')
             });
         }
 
@@ -106,10 +123,22 @@ const getAccountStatus = async (req, res) => {
     try {
         const scholarUserId = req.user.id;
 
-        const [scholarProfile] = await pool.query(
-            'SELECT stripe_account_id, stripe_onboarding_complete, stripe_details_submitted FROM scholar_profile WHERE user_id = ?',
-            [scholarUserId]
-        );
+        // Use a simpler query that only requires stripe_account_id column
+        // Other columns might not exist in all database versions
+        let scholarProfile;
+        try {
+            [scholarProfile] = await pool.query(
+                'SELECT stripe_account_id, stripe_onboarding_complete, stripe_details_submitted FROM scholar_profile WHERE user_id = ?',
+                [scholarUserId]
+            );
+        } catch (dbError) {
+            // If the query fails (missing columns), try simpler query
+            console.warn('Extended stripe columns not found, using basic query:', dbError.message);
+            [scholarProfile] = await pool.query(
+                'SELECT stripe_account_id FROM scholar_profile WHERE user_id = ?',
+                [scholarUserId]
+            );
+        }
 
         if (scholarProfile.length === 0) {
             return res.status(404).json({ message: 'Scholar profile not found' });
@@ -128,35 +157,39 @@ const getAccountStatus = async (req, res) => {
         }
 
         // Check if Stripe is properly configured
-        if (!process.env.STRIPE_SECRET_KEY || 
-            process.env.STRIPE_SECRET_KEY.includes('dummy') ||
-            !process.env.STRIPE_SECRET_KEY.startsWith('sk_')) {
+        const configErrors = checkStripeConfiguration();
+        if (configErrors.length > 0) {
             // Return database values if Stripe not configured
             return res.json({
                 connected: true,
                 accountId: scholar.stripe_account_id,
-                onboardingComplete: scholar.stripe_onboarding_complete ? true : false,
-                detailsSubmitted: scholar.stripe_details_submitted ? true : false,
+                onboardingComplete: scholar.stripe_onboarding_complete || false,
+                detailsSubmitted: scholar.stripe_details_submitted || false,
                 chargesEnabled: false,
                 payoutsEnabled: false,
                 country: 'FI',
                 currency: 'eur',
-                stripeNotConfigured: true
+                stripeNotConfigured: true,
+                configErrors: configErrors
             });
         }
 
         // Get account details from Stripe
         const account = await stripe.accounts.retrieve(scholar.stripe_account_id);
 
-        // Update database with current status
-        await pool.query(
-            'UPDATE scholar_profile SET stripe_onboarding_complete = ?, stripe_details_submitted = ? WHERE user_id = ?',
-            [
-                account.details_submitted ? 1 : 0,
-                account.details_submitted ? 1 : 0,
-                scholarUserId
-            ]
-        );
+        // Update database with current status (try/catch for missing columns)
+        try {
+            await pool.query(
+                'UPDATE scholar_profile SET stripe_onboarding_complete = ?, stripe_details_submitted = ? WHERE user_id = ?',
+                [
+                    account.details_submitted ? 1 : 0,
+                    account.details_submitted ? 1 : 0,
+                    scholarUserId
+                ]
+            );
+        } catch (updateError) {
+            console.warn('Could not update stripe status columns:', updateError.message);
+        }
 
         res.json({
             connected: true,
@@ -218,17 +251,26 @@ const createPayout = async (req, res) => {
     try {
         const { scholarUserId, amount, currency = 'eur', description } = req.body;
 
-        // Get scholar's Stripe account
-        const [scholarProfile] = await pool.query(
-            'SELECT stripe_account_id, stripe_onboarding_complete FROM scholar_profile WHERE user_id = ?',
-            [scholarUserId]
-        );
+        // Get scholar's Stripe account (handle missing columns gracefully)
+        let scholarProfile;
+        try {
+            [scholarProfile] = await pool.query(
+                'SELECT stripe_account_id, stripe_onboarding_complete FROM scholar_profile WHERE user_id = ?',
+                [scholarUserId]
+            );
+        } catch (dbError) {
+            console.warn('Extended stripe columns not found, using basic query:', dbError.message);
+            [scholarProfile] = await pool.query(
+                'SELECT stripe_account_id FROM scholar_profile WHERE user_id = ?',
+                [scholarUserId]
+            );
+        }
 
         if (scholarProfile.length === 0) {
             return res.status(404).json({ message: 'Scholar not found' });
         }
 
-        if (!scholarProfile[0].stripe_account_id || !scholarProfile[0].stripe_onboarding_complete) {
+        if (!scholarProfile[0].stripe_account_id) {
             return res.status(400).json({ 
                 message: 'Scholar has not completed Stripe onboarding' 
             });
@@ -272,21 +314,40 @@ const createPayout = async (req, res) => {
  */
 const getAllScholarsStripeStatus = async (req, res) => {
     try {
-        const [scholars] = await pool.query(`
-            SELECT 
-                u.id,
-                u.fname,
-                u.lname,
-                u.email,
-                sp.stripe_account_id,
-                sp.stripe_onboarding_complete,
-                sp.stripe_details_submitted,
-                sp.approved
-            FROM users u
-            JOIN scholar_profile sp ON u.id = sp.user_id
-            WHERE sp.approved = 1
-            ORDER BY u.fname, u.lname
-        `);
+        // Try with all columns first, fall back to basic columns if they don't exist
+        let scholars;
+        try {
+            [scholars] = await pool.query(`
+                SELECT 
+                    u.id,
+                    u.fname,
+                    u.lname,
+                    u.email,
+                    sp.stripe_account_id,
+                    sp.stripe_onboarding_complete,
+                    sp.stripe_details_submitted,
+                    sp.approved
+                FROM users u
+                JOIN scholar_profile sp ON u.id = sp.user_id
+                WHERE sp.approved = 1
+                ORDER BY u.fname, u.lname
+            `);
+        } catch (dbError) {
+            console.warn('Extended stripe columns not found, using basic query:', dbError.message);
+            [scholars] = await pool.query(`
+                SELECT 
+                    u.id,
+                    u.fname,
+                    u.lname,
+                    u.email,
+                    sp.stripe_account_id,
+                    sp.approved
+                FROM users u
+                JOIN scholar_profile sp ON u.id = sp.user_id
+                WHERE sp.approved = 1
+                ORDER BY u.fname, u.lname
+            `);
+        }
 
         // Check if Stripe is properly configured
         const stripeConfigured = process.env.STRIPE_SECRET_KEY && 
@@ -309,7 +370,7 @@ const getAllScholarsStripeStatus = async (req, res) => {
                     return {
                         ...scholar,
                         stripeStatus: scholar.stripe_onboarding_complete ? 'Linked' : 'Incomplete',
-                        payoutsEnabled: scholar.stripe_onboarding_complete ? true : false,
+                        payoutsEnabled: scholar.stripe_onboarding_complete || false,
                         country: 'Finland'
                     };
                 }
