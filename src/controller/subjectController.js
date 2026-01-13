@@ -104,7 +104,8 @@ const updateBundlePrice = async (req, res) => {
         res.json({ 
             message: "Bundle price updated successfully",
             subjectId: id,
-            newPrice: bundlePrice
+            newPrice: bundlePrice,
+            updatedAt: new Date().toISOString()
         });
     } catch (error) {
         console.error("Error updating bundle price:", error);
@@ -125,7 +126,8 @@ const getSubjectBundlePrice = async (req, res) => {
         res.json({
             subjectId: rows[0].id,
             name: rows[0].name,
-            bundlePrice: rows[0].bundle_price || 6.00
+            bundlePrice: rows[0].bundle_price || 6.00,
+            priceUpdatedAt: rows[0].bundle_price_updated_at || null
         });
     } catch (error) {
         console.error("Error fetching bundle price:", error);
