@@ -481,7 +481,7 @@ const getScholarEarnings = async (req, res) => {
                 COALESCE(SUM(sp.amount), 0) as course_revenue
             FROM subjects s
             LEFT JOIN subject_purchases sp ON s.id = sp.subject_id AND sp.scholar_id = ?
-            JOIN scholar_subjects ss ON s.id = ss.subject_id AND ss.user_id = ?
+            JOIN scholar_subjects ss ON s.id = ss.subject_id AND ss.scholar_user_id = ?
             GROUP BY s.id, s.name, s.bundle_price
             ORDER BY sales_count DESC
         `, [scholarUserId, scholarUserId]);
