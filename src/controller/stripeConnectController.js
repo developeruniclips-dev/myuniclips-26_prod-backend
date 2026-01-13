@@ -50,18 +50,32 @@ const createConnectAccount = async (req, res) => {
 
         // Check if already has Stripe account
         if (scholar.stripe_account_id) {
-            // Account exists, create new onboarding link
-            const accountLink = await stripe.accountLinks.create({
-                account: scholar.stripe_account_id,
-                refresh_url: `${process.env.FRONTEND_URL}/scholar-dashboard?stripe=refresh`,
-                return_url: `${process.env.FRONTEND_URL}/scholar-dashboard?stripe=success`,
-                type: 'account_onboarding',
-            });
+            try {
+                // Verify the account exists on current Stripe platform
+                await stripe.accounts.retrieve(scholar.stripe_account_id);
+                
+                // Account exists, create new onboarding link
+                const accountLink = await stripe.accountLinks.create({
+                    account: scholar.stripe_account_id,
+                    refresh_url: `${process.env.FRONTEND_URL}/scholar-dashboard?stripe=refresh`,
+                    return_url: `${process.env.FRONTEND_URL}/scholar-dashboard?stripe=success`,
+                    type: 'account_onboarding',
+                });
 
-            return res.json({ 
-                url: accountLink.url,
-                accountId: scholar.stripe_account_id 
-            });
+                return res.json({ 
+                    url: accountLink.url,
+                    accountId: scholar.stripe_account_id 
+                });
+            } catch (stripeError) {
+                // Account doesn't exist on this platform (likely created with different keys)
+                // Clear the old account ID and create a new one
+                console.warn(`Stripe account ${scholar.stripe_account_id} not found on platform, creating new account`);
+                await pool.query(
+                    'UPDATE scholar_profile SET stripe_account_id = NULL, stripe_onboarding_complete = 0, stripe_details_submitted = 0 WHERE user_id = ?',
+                    [scholarUserId]
+                );
+                // Continue to create new account below
+            }
         }
 
         // Get user details
@@ -175,7 +189,26 @@ const getAccountStatus = async (req, res) => {
         }
 
         // Get account details from Stripe
-        const account = await stripe.accounts.retrieve(scholar.stripe_account_id);
+        let account;
+        try {
+            account = await stripe.accounts.retrieve(scholar.stripe_account_id);
+        } catch (stripeError) {
+            // Account doesn't exist on this platform - clear it and return not connected
+            console.warn(`Stripe account ${scholar.stripe_account_id} not found, clearing from database`);
+            await pool.query(
+                'UPDATE scholar_profile SET stripe_account_id = NULL, stripe_onboarding_complete = 0, stripe_details_submitted = 0 WHERE user_id = ?',
+                [scholarUserId]
+            );
+            return res.json({ 
+                connected: false,
+                onboardingComplete: false,
+                detailsSubmitted: false,
+                chargesEnabled: false,
+                payoutsEnabled: false,
+                accountCleared: true,
+                message: 'Previous Stripe account was invalid and has been cleared. Please reconnect.'
+            });
+        }
 
         // Update database with current status (try/catch for missing columns)
         try {
