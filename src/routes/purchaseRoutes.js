@@ -5,7 +5,10 @@ const {
   getUserPurchases, 
   purchaseVideo, 
   getAllTransactions,
-  // New subject bundle functions
+  // Stripe Checkout Session (Marketplace)
+  createCheckoutSession,
+  handleCheckoutSuccess,
+  // Subject bundle functions
   createSubjectPaymentIntent,
   confirmSubjectPurchase,
   checkSubjectPurchase,
@@ -21,7 +24,11 @@ const purchaseRoutes = Router();
 purchaseRoutes.post('/', authMiddleware, authorizeRoles("Learner","Scholar"), purchaseVideo);
 purchaseRoutes.get('/my-purchases', authMiddleware, authorizeRoles("Learner","Scholar"), getUserPurchases);
 
-// NEW: Subject bundle purchases (€6 per course)
+// NEW: Stripe Checkout Session (Marketplace model - redirects to Stripe)
+purchaseRoutes.post('/create-checkout-session', authMiddleware, authorizeRoles("Learner","Scholar"), createCheckoutSession);
+purchaseRoutes.post('/checkout-success', authMiddleware, authorizeRoles("Learner","Scholar"), handleCheckoutSuccess);
+
+// Subject bundle purchases with embedded card form
 purchaseRoutes.post('/subject/create-payment-intent', authMiddleware, authorizeRoles("Learner","Scholar"), createSubjectPaymentIntent);
 purchaseRoutes.post('/subject/confirm', authMiddleware, authorizeRoles("Learner","Scholar"), confirmSubjectPurchase);
 purchaseRoutes.get('/subject/check', authMiddleware, authorizeRoles("Learner","Scholar"), checkSubjectPurchase);

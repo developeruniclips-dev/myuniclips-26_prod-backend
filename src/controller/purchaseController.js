@@ -2,11 +2,164 @@ const { VideoModel } = require("../models/videos");
 const { PurchaseModel } = require("../models/purchases");
 const { SubjectModel } = require("../models/subject");
 const stripe = require("../config/stripe");
+const { pool } = require("../config/db");
 
 // Default bundle price if not set
 const DEFAULT_BUNDLE_PRICE = 6.00;
 
-// NEW: Create payment intent for subject bundle (dynamic price)
+// Platform fee percentage (UniClips keeps 20%, scholar gets 80%)
+const PLATFORM_FEE_PERCENT = 20;
+
+/**
+ * Create Stripe Checkout Session for subject bundle (Marketplace model)
+ * - Collects payment from student
+ * - Automatically transfers scholar's share to their connected account
+ */
+const createCheckoutSession = async (req, res) => {
+  try {
+    const { subjectId, scholarId } = req.body;
+    const buyerId = req.user.id;
+
+    if (!subjectId || !scholarId) {
+      return res.status(400).json({ message: "Subject ID and Scholar ID are required" });
+    }
+
+    // Check if already purchased
+    const [existing] = await PurchaseModel.hasPurchasedSubject(buyerId, subjectId, scholarId);
+    if (existing.length > 0) {
+      return res.status(400).json({ message: "You have already purchased this course bundle" });
+    }
+
+    // Get the bundle price and subject name
+    const [subjectRows] = await SubjectModel.findByIdWithPrice(subjectId);
+    const subject = subjectRows[0];
+    const bundlePrice = subject && subject.bundle_price 
+      ? parseFloat(subject.bundle_price) 
+      : DEFAULT_BUNDLE_PRICE;
+    const subjectName = subject?.name || "Course Bundle";
+
+    // Get scholar's Stripe connected account
+    const [scholarProfile] = await pool.query(
+      'SELECT stripe_account_id, stripe_onboarding_complete FROM scholar_profile WHERE user_id = ?',
+      [scholarId]
+    );
+
+    const scholarStripeAccountId = scholarProfile[0]?.stripe_account_id;
+    const scholarOnboardingComplete = scholarProfile[0]?.stripe_onboarding_complete;
+
+    // Get scholar name for display
+    const [scholarUser] = await pool.query(
+      'SELECT fname, lname FROM users WHERE id = ?',
+      [scholarId]
+    );
+    const scholarName = scholarUser[0] ? `${scholarUser[0].fname} ${scholarUser[0].lname}` : 'Scholar';
+
+    // Calculate amounts
+    const totalAmountCents = Math.round(bundlePrice * 100);
+    const platformFeeCents = Math.round(totalAmountCents * (PLATFORM_FEE_PERCENT / 100));
+    const scholarAmountCents = totalAmountCents - platformFeeCents;
+
+    // Build checkout session config
+    const sessionConfig = {
+      mode: 'payment',
+      line_items: [
+        {
+          price_data: {
+            currency: 'eur',
+            product_data: {
+              name: subjectName,
+              description: `Full course access by ${scholarName} - All videos included`,
+            },
+            unit_amount: totalAmountCents,
+          },
+          quantity: 1,
+        },
+      ],
+      metadata: {
+        buyerId: buyerId.toString(),
+        subjectId: subjectId.toString(),
+        scholarId: scholarId.toString(),
+        type: 'subject_bundle',
+        bundlePrice: bundlePrice.toString(),
+        platformFee: (platformFeeCents / 100).toString(),
+        scholarAmount: (scholarAmountCents / 100).toString(),
+      },
+      success_url: `${process.env.FRONTEND_URL}/course/${subjectId}/${scholarId}?payment=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.FRONTEND_URL}/course/${subjectId}/${scholarId}?payment=cancelled`,
+    };
+
+    // If scholar has completed Stripe onboarding, use destination charges
+    if (scholarStripeAccountId && scholarOnboardingComplete) {
+      sessionConfig.payment_intent_data = {
+        application_fee_amount: platformFeeCents,
+        transfer_data: {
+          destination: scholarStripeAccountId,
+        },
+      };
+    }
+
+    // Create Stripe Checkout Session
+    const session = await stripe.checkout.sessions.create(sessionConfig);
+
+    res.status(200).json({
+      sessionId: session.id,
+      url: session.url,
+      amount: bundlePrice,
+      platformFee: platformFeeCents / 100,
+      scholarAmount: scholarAmountCents / 100,
+    });
+  } catch (err) {
+    console.error("Error creating checkout session:", err);
+    res.status(500).json({ message: "Failed to create checkout session", error: err.message });
+  }
+};
+
+/**
+ * Handle successful checkout - called by webhook or success page
+ */
+const handleCheckoutSuccess = async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    const buyerId = req.user.id;
+
+    // Retrieve the session from Stripe
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    if (session.payment_status !== 'paid') {
+      return res.status(400).json({ message: "Payment not completed" });
+    }
+
+    const { subjectId, scholarId, bundlePrice } = session.metadata;
+
+    // Check if already purchased (prevent double processing)
+    const [existing] = await PurchaseModel.hasPurchasedSubject(buyerId, parseInt(subjectId), parseInt(scholarId));
+    if (existing.length > 0) {
+      return res.status(200).json({ 
+        message: "Purchase already recorded",
+        success: true 
+      });
+    }
+
+    // Save the purchase
+    await PurchaseModel.purchaseSubjectBundle(
+      buyerId, 
+      parseInt(subjectId), 
+      parseInt(scholarId), 
+      parseFloat(bundlePrice), 
+      session.payment_intent
+    );
+
+    res.status(200).json({ 
+      message: "Purchase successful! You now have access to all videos in this course.",
+      success: true
+    });
+  } catch (err) {
+    console.error("Error handling checkout success:", err);
+    res.status(500).json({ message: "Failed to process purchase", error: err.message });
+  }
+};
+
+// Legacy: Create payment intent for subject bundle (for embedded card form)
 const createSubjectPaymentIntent = async (req, res) => {
   try {
     const { subjectId, scholarId } = req.body;
@@ -28,9 +181,22 @@ const createSubjectPaymentIntent = async (req, res) => {
       ? parseFloat(subjectRows[0].bundle_price) 
       : DEFAULT_BUNDLE_PRICE;
 
-    // Create Stripe PaymentIntent with dynamic price
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: Math.round(bundlePrice * 100), // Convert to cents
+    // Get scholar's Stripe connected account
+    const [scholarProfile] = await pool.query(
+      'SELECT stripe_account_id, stripe_onboarding_complete FROM scholar_profile WHERE user_id = ?',
+      [scholarId]
+    );
+
+    const scholarStripeAccountId = scholarProfile[0]?.stripe_account_id;
+    const scholarOnboardingComplete = scholarProfile[0]?.stripe_onboarding_complete;
+
+    // Calculate platform fee
+    const totalAmountCents = Math.round(bundlePrice * 100);
+    const platformFeeCents = Math.round(totalAmountCents * (PLATFORM_FEE_PERCENT / 100));
+
+    // Build payment intent config
+    const paymentIntentConfig = {
+      amount: totalAmountCents,
       currency: "eur",
       metadata: {
         buyerId: buyerId.toString(),
@@ -39,7 +205,18 @@ const createSubjectPaymentIntent = async (req, res) => {
         type: "subject_bundle",
         bundlePrice: bundlePrice.toString()
       },
-    });
+    };
+
+    // If scholar has completed Stripe onboarding, use destination charges
+    if (scholarStripeAccountId && scholarOnboardingComplete) {
+      paymentIntentConfig.application_fee_amount = platformFeeCents;
+      paymentIntentConfig.transfer_data = {
+        destination: scholarStripeAccountId,
+      };
+    }
+
+    // Create Stripe PaymentIntent
+    const paymentIntent = await stripe.paymentIntents.create(paymentIntentConfig);
 
     res.status(200).json({
       clientSecret: paymentIntent.client_secret,
@@ -284,6 +461,9 @@ module.exports = {
   createPaymentIntent,
   confirmPurchase,
   getAllTransactions,
+  // Stripe Checkout Session (Marketplace)
+  createCheckoutSession,
+  handleCheckoutSuccess,
   // Subject bundle functions
   createSubjectPaymentIntent,
   confirmSubjectPurchase,
