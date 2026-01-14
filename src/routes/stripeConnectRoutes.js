@@ -5,7 +5,8 @@ const {
     createDashboardLink,
     createPayout,
     getAllScholarsStripeStatus,
-    getScholarEarnings
+    getScholarEarnings,
+    getPlatformBalance
 } = require('../controller/stripeConnectController');
 const { authMiddleware } = require('../middleware/auth');
 const { authorizeRoles } = require('../middleware/roles');
@@ -55,6 +56,13 @@ stripeConnectRoutes.get(
     authMiddleware,
     authorizeRoles('Admin'),
     getAllScholarsStripeStatus
+);
+
+stripeConnectRoutes.get(
+    '/platform-balance',
+    authMiddleware,
+    authorizeRoles('Admin'),
+    getPlatformBalance
 );
 
 module.exports = stripeConnectRoutes;

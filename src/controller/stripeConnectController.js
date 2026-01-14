@@ -278,11 +278,58 @@ const createDashboardLink = async (req, res) => {
 };
 
 /**
+ * Get Platform Balance (Admin only)
+ */
+const getPlatformBalance = async (req, res) => {
+    try {
+        const balance = await stripe.balance.retrieve();
+        
+        // Format balance by currency
+        const available = {};
+        const pending = {};
+        
+        balance.available.forEach(b => {
+            available[b.currency] = b.amount / 100;
+        });
+        
+        balance.pending.forEach(b => {
+            pending[b.currency] = b.amount / 100;
+        });
+
+        res.json({
+            available,
+            pending,
+            message: 'Pending funds become available 2-7 days after payment'
+        });
+
+    } catch (error) {
+        console.error('Error getting platform balance:', error);
+        res.status(500).json({ 
+            message: 'Error getting platform balance', 
+            error: error.message 
+        });
+    }
+};
+
+/**
  * Create Payout to Scholar (Admin only)
  */
 const createPayout = async (req, res) => {
     try {
         const { scholarUserId, amount, currency = 'eur', description } = req.body;
+
+        // Check platform's available balance first
+        const balance = await stripe.balance.retrieve();
+        const availableBalance = balance.available.find(b => b.currency === currency);
+        const availableAmount = availableBalance ? availableBalance.amount / 100 : 0;
+        
+        if (availableAmount < amount) {
+            return res.status(400).json({ 
+                message: `Insufficient available funds. Available: €${availableAmount.toFixed(2)}, Requested: €${amount.toFixed(2)}. Funds typically become available 2-7 days after payment.`,
+                availableBalance: availableAmount,
+                pendingInfo: 'Stripe holds funds for new accounts. Check your Stripe Dashboard for pending balance.'
+            });
+        }
 
         // Get scholar's Stripe account (handle missing columns gracefully)
         let scholarProfile;
@@ -335,6 +382,15 @@ const createPayout = async (req, res) => {
 
     } catch (error) {
         console.error('Error creating payout:', error);
+        
+        // Better error messages for common Stripe errors
+        if (error.message?.includes('Insufficient funds')) {
+            return res.status(400).json({ 
+                message: 'Insufficient funds in platform account. Funds become available 2-7 days after customer payment.',
+                error: error.message
+            });
+        }
+        
         res.status(500).json({ 
             message: 'Error creating payout', 
             error: error.message 
@@ -638,5 +694,6 @@ module.exports = {
     createDashboardLink,
     createPayout,
     getAllScholarsStripeStatus,
-    getScholarEarnings
+    getScholarEarnings,
+    getPlatformBalance
 };
