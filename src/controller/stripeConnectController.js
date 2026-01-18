@@ -746,12 +746,18 @@ const sendVerificationEmail = async (req, res) => {
             });
         }
 
+        // Use 'account_update' for accounts that already completed initial onboarding
+        // This shows only the pending verification items (like ID upload)
+        // Use 'account_onboarding' for accounts that haven't completed initial setup
+        const linkType = account.details_submitted ? 'account_update' : 'account_onboarding';
+        
         // Create an account link for the scholar to complete verification
         const accountLink = await stripe.accountLinks.create({
             account: scholar.stripe_account_id,
             refresh_url: `${process.env.FRONTEND_URL}/scholar-dashboard?stripe=refresh`,
             return_url: `${process.env.FRONTEND_URL}/scholar-dashboard?stripe=success`,
-            type: 'account_onboarding',
+            type: linkType,
+            collect: 'eventually_due', // Collect all requirements including future ones
         });
 
         // Send email with verification link
@@ -774,6 +780,7 @@ const sendVerificationEmail = async (req, res) => {
         res.json({ 
             message: `Verification email sent to ${scholar.email}`,
             requirements: allRequirements,
+            linkType: linkType,
             emailSent: true
         });
 
