@@ -26,14 +26,14 @@ const UserModel = {
 
     delete: async (id) => {
         // Delete in order to respect foreign key constraints
-        // First delete from tables that reference this user
-        await pool.query("DELETE FROM subject_purchases WHERE buyer_user_id = ? OR scholar_id = ?", [id, id]);
-        await pool.query("DELETE FROM user_library WHERE user_id = ?", [id]);
-        await pool.query("DELETE FROM videos WHERE scholar_user_id = ?", [id]);
-        await pool.query("DELETE FROM scholar_subjects WHERE scholar_user_id = ?", [id]);
-        await pool.query("DELETE FROM scholar_profile WHERE user_id = ?", [id]);
-        await pool.query("DELETE FROM user_roles WHERE user_id = ?", [id]);
-        await pool.query("DELETE FROM purchases WHERE user_id = ?", [id]);
+        // Use try-catch for each to handle tables that might not exist
+        try { await pool.query("DELETE FROM subject_purchases WHERE buyer_user_id = ? OR scholar_id = ?", [id, id]); } catch(e) { console.log('subject_purchases delete skipped:', e.message); }
+        try { await pool.query("DELETE FROM user_library WHERE user_id = ?", [id]); } catch(e) { console.log('user_library delete skipped:', e.message); }
+        try { await pool.query("DELETE FROM videos WHERE scholar_user_id = ?", [id]); } catch(e) { console.log('videos delete skipped:', e.message); }
+        try { await pool.query("DELETE FROM scholar_subjects WHERE scholar_user_id = ?", [id]); } catch(e) { console.log('scholar_subjects delete skipped:', e.message); }
+        try { await pool.query("DELETE FROM scholar_profile WHERE user_id = ?", [id]); } catch(e) { console.log('scholar_profile delete skipped:', e.message); }
+        try { await pool.query("DELETE FROM user_roles WHERE user_id = ?", [id]); } catch(e) { console.log('user_roles delete skipped:', e.message); }
+        try { await pool.query("DELETE FROM purchases WHERE user_id = ?", [id]); } catch(e) { console.log('purchases delete skipped:', e.message); }
         return pool.query("DELETE FROM users WHERE id = ?", [id]);
     },
 
