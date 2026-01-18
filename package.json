@@ -19,6 +19,7 @@
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
     "mysql2": "^3.15.3",
+    "nodemailer": "^7.0.12",
     "stripe": "^17.6.0"
   },
   "devDependencies": {
