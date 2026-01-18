@@ -4,6 +4,32 @@ const { UserModel } = require("../models/User");
 const { UserRoleModel } = require("../models/userRole");
 const { pool } = require("../config/db");
 
+// Helper function to ensure password reset columns exist
+const ensurePasswordResetColumnsExist = async () => {
+    try {
+        // Check if columns exist
+        const [columns] = await pool.query(
+            `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' 
+             AND COLUMN_NAME IN ('password_reset_token', 'password_reset_expires')`
+        );
+        
+        if (columns.length < 2) {
+            // Add missing columns
+            console.log('Adding password reset columns to users table...');
+            try {
+                await pool.query(`ALTER TABLE users ADD COLUMN password_reset_token VARCHAR(255) NULL`);
+            } catch (e) { /* Column might already exist */ }
+            try {
+                await pool.query(`ALTER TABLE users ADD COLUMN password_reset_expires DATETIME NULL`);
+            } catch (e) { /* Column might already exist */ }
+            console.log('Password reset columns added successfully');
+        }
+    } catch (error) {
+        console.error('Error checking/adding password reset columns:', error.message);
+    }
+};
+
 // Request password reset (send token)
 const requestPasswordReset = async (req, res) => {
     try {
@@ -12,6 +38,9 @@ const requestPasswordReset = async (req, res) => {
         if (!email) {
             return res.status(400).json({ message: "Email is required" });
         }
+
+        // Ensure columns exist before proceeding
+        await ensurePasswordResetColumnsExist();
 
         // Find user by email
         const [userRows] = await UserModel.findByEmail(email);
@@ -25,8 +54,13 @@ const requestPasswordReset = async (req, res) => {
         const user = userRows[0];
 
         // Check if user is SuperAdmin - they cannot reset password
-        const [roleRows] = await UserRoleModel.getRolesById(user.id);
-        const roles = roleRows.map(row => row.name);
+        let roles = [];
+        try {
+            const [roleRows] = await UserRoleModel.getRolesById(user.id);
+            roles = roleRows.map(row => row.name);
+        } catch (e) {
+            console.warn('Could not fetch user roles:', e.message);
+        }
 
         if (roles.includes('SuperAdmin')) {
             return res.status(403).json({ 
@@ -47,16 +81,14 @@ const requestPasswordReset = async (req, res) => {
         );
 
         // In production, you would send an email here with the reset link
-        // For now, we'll return the token (for development/testing)
-        const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
+        const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
 
         // TODO: Send email with resetUrl
-        // For development, log it
         console.log(`Password reset URL for ${email}: ${resetUrl}`);
 
         res.status(200).json({ 
             message: "If an account with that email exists, a password reset link has been sent.",
-            // Remove this in production - only for testing
+            // Include token in non-production for testing
             ...(process.env.NODE_ENV !== 'production' && { resetUrl, token: resetToken })
         });
 
@@ -79,6 +111,9 @@ const resetPassword = async (req, res) => {
             return res.status(400).json({ message: "Password must be at least 6 characters" });
         }
 
+        // Ensure columns exist
+        await ensurePasswordResetColumnsExist();
+
         // Find user by email
         const [userRows] = await UserModel.findByEmail(email);
         if (userRows.length === 0) {
@@ -88,8 +123,13 @@ const resetPassword = async (req, res) => {
         const user = userRows[0];
 
         // Check if user is SuperAdmin - they cannot reset password
-        const [roleRows] = await UserRoleModel.getRolesById(user.id);
-        const roles = roleRows.map(row => row.name);
+        let roles = [];
+        try {
+            const [roleRows] = await UserRoleModel.getRolesById(user.id);
+            roles = roleRows.map(row => row.name);
+        } catch (e) {
+            console.warn('Could not fetch user roles:', e.message);
+        }
 
         if (roles.includes('SuperAdmin')) {
             return res.status(403).json({ 
