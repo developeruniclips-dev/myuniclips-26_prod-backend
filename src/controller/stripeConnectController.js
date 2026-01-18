@@ -698,6 +698,129 @@ const getScholarEarnings = async (req, res) => {
     }
 };
 
+/**
+ * Send Stripe verification email to scholar with link to complete requirements
+ */
+const sendVerificationEmail = async (req, res) => {
+    try {
+        const { sendStripeVerificationEmail } = require('../utils/emailService');
+        const scholarUserId = req.user.id;
+
+        // Get scholar profile with Stripe account
+        const [scholarProfile] = await pool.query(
+            'SELECT sp.stripe_account_id, u.email, u.fname, u.lname FROM scholar_profile sp JOIN users u ON sp.user_id = u.id WHERE sp.user_id = ?',
+            [scholarUserId]
+        );
+
+        if (scholarProfile.length === 0 || !scholarProfile[0].stripe_account_id) {
+            return res.status(404).json({ 
+                message: 'Stripe account not found. Please connect your Stripe account first.' 
+            });
+        }
+
+        const scholar = scholarProfile[0];
+
+        // Get account details from Stripe to check requirements
+        const account = await stripe.accounts.retrieve(scholar.stripe_account_id);
+
+        // Check if there are pending requirements
+        const pendingRequirements = account.requirements?.currently_due || [];
+        const eventuallyDue = account.requirements?.eventually_due || [];
+        const allRequirements = [...new Set([...pendingRequirements, ...eventuallyDue])];
+
+        if (allRequirements.length === 0 && account.charges_enabled && account.payouts_enabled) {
+            return res.json({ 
+                message: 'Your Stripe account is fully verified! No additional action needed.',
+                fullyVerified: true
+            });
+        }
+
+        // Create an account link for the scholar to complete verification
+        const accountLink = await stripe.accountLinks.create({
+            account: scholar.stripe_account_id,
+            refresh_url: `${process.env.FRONTEND_URL}/scholar-dashboard?stripe=refresh`,
+            return_url: `${process.env.FRONTEND_URL}/scholar-dashboard?stripe=success`,
+            type: 'account_onboarding',
+        });
+
+        // Send email with verification link
+        const userName = scholar.fname || 'Scholar';
+        const emailResult = await sendStripeVerificationEmail(
+            scholar.email,
+            accountLink.url,
+            userName,
+            allRequirements
+        );
+
+        if (!emailResult.success) {
+            console.error('Failed to send Stripe verification email:', emailResult.error);
+            return res.status(500).json({ 
+                message: 'Failed to send verification email. Please try again.',
+                error: emailResult.error
+            });
+        }
+
+        res.json({ 
+            message: `Verification email sent to ${scholar.email}`,
+            requirements: allRequirements,
+            emailSent: true
+        });
+
+    } catch (error) {
+        console.error('Error sending Stripe verification email:', error);
+        res.status(500).json({ 
+            message: 'Error sending verification email', 
+            error: error.message 
+        });
+    }
+};
+
+/**
+ * Get Stripe account requirements/pending actions
+ */
+const getAccountRequirements = async (req, res) => {
+    try {
+        const scholarUserId = req.user.id;
+
+        const [scholarProfile] = await pool.query(
+            'SELECT stripe_account_id FROM scholar_profile WHERE user_id = ?',
+            [scholarUserId]
+        );
+
+        if (scholarProfile.length === 0 || !scholarProfile[0].stripe_account_id) {
+            return res.json({ 
+                connected: false,
+                requirements: []
+            });
+        }
+
+        const account = await stripe.accounts.retrieve(scholarProfile[0].stripe_account_id);
+
+        const pendingRequirements = account.requirements?.currently_due || [];
+        const eventuallyDue = account.requirements?.eventually_due || [];
+        const pastDue = account.requirements?.past_due || [];
+
+        res.json({
+            connected: true,
+            chargesEnabled: account.charges_enabled,
+            payoutsEnabled: account.payouts_enabled,
+            requirements: {
+                currentlyDue: pendingRequirements,
+                eventuallyDue: eventuallyDue,
+                pastDue: pastDue,
+                hasRequirements: pendingRequirements.length > 0 || eventuallyDue.length > 0 || pastDue.length > 0
+            }
+        });
+
+    } catch (error) {
+        console.error('Error getting Stripe requirements:', error);
+        res.status(500).json({ 
+            message: 'Error retrieving account requirements', 
+            error: error.message 
+        });
+    }
+};
+
 module.exports = {
     createConnectAccount,
     getAccountStatus,
@@ -705,5 +828,7 @@ module.exports = {
     createPayout,
     getAllScholarsStripeStatus,
     getScholarEarnings,
-    getPlatformBalance
+    getPlatformBalance,
+    sendVerificationEmail,
+    getAccountRequirements
 };

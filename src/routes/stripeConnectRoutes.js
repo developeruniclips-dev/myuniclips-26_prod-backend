@@ -6,7 +6,9 @@ const {
     createPayout,
     getAllScholarsStripeStatus,
     getScholarEarnings,
-    getPlatformBalance
+    getPlatformBalance,
+    sendVerificationEmail,
+    getAccountRequirements
 } = require('../controller/stripeConnectController');
 const { authMiddleware } = require('../middleware/auth');
 const { authorizeRoles } = require('../middleware/roles');
@@ -63,6 +65,22 @@ stripeConnectRoutes.get(
     authMiddleware,
     authorizeRoles('Admin'),
     getPlatformBalance
+);
+
+// Scholar route to get their account requirements
+stripeConnectRoutes.get(
+    '/requirements',
+    authMiddleware,
+    authorizeRoles('Scholar'),
+    getAccountRequirements
+);
+
+// Scholar route to send verification email
+stripeConnectRoutes.post(
+    '/send-verification-email',
+    authMiddleware,
+    authorizeRoles('Scholar'),
+    sendVerificationEmail
 );
 
 module.exports = stripeConnectRoutes;

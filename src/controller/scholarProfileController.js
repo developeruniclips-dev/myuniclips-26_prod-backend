@@ -113,10 +113,25 @@ const rejectScholarApplication = async (req, res) => {
   }
 };
 
-// Get scholar profile status for logged-in scholar
+// Get scholar profile status for logged-in user
 const getScholarProfileStatus = async (req, res) => {
   try {
     const user_id = req.user.id;
+
+    // First check if user registered as a scholar
+    const [userRow] = await pool.query(
+      "SELECT isScholar FROM users WHERE id = ?",
+      [user_id]
+    );
+
+    if (userRow.length === 0 || !userRow[0].isScholar) {
+      return res.json({ 
+        message: "User is not a scholar applicant",
+        isScholar: false,
+        approved: false,
+        profile: null
+      });
+    }
 
     const [profile] = await pool.query(
       "SELECT * FROM scholar_profile WHERE user_id = ?",
@@ -124,13 +139,16 @@ const getScholarProfileStatus = async (req, res) => {
     );
 
     if (profile.length === 0) {
-      return res.status(404).json({ 
-        message: "No scholar profile found",
-        approved: false
+      return res.json({ 
+        message: "Scholar application pending - no profile created yet",
+        isScholar: true,
+        approved: false,
+        profile: null
       });
     }
 
     res.json({
+      isScholar: true,
       profile: profile[0],
       approved: profile[0].approved === 1
     });

@@ -11,10 +11,10 @@ const { authorizeRoles } = require("../middleware/roles");
 const scholarProfileRoutes = Router();
 
 // Scholar routes - check own profile status
+// Any authenticated user can check their scholar application status
 scholarProfileRoutes.get(
   "/status",
   authMiddleware,
-  authorizeRoles("Scholar"),
   getScholarProfileStatus
 );
 
