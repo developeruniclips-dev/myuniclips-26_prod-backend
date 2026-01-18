@@ -225,35 +225,18 @@ const getAccountStatus = async (req, res) => {
             console.warn('Could not update stripe status columns:', updateError.message);
         }
 
-        // FIX: Only consider "linked" if onboarding is truly complete
-        // This requires both details_submitted AND charges_enabled
+        // Only consider "linked" if onboarding is complete (details_submitted AND charges_enabled)
         const isFullyOnboarded = account.details_submitted && account.charges_enabled;
-        
-        // Check for pending requirements (identity verification, etc.)
-        const pendingRequirements = account.requirements?.currently_due || [];
-        const eventuallyDue = account.requirements?.eventually_due || [];
-        const hasPendingRequirements = pendingRequirements.length > 0 || eventuallyDue.length > 0;
 
         res.json({
             connected: !!account.id, // Has a Stripe account ID
             accountId: account.id,
-            onboardingComplete: isFullyOnboarded && !hasPendingRequirements, // Must have no pending requirements
+            onboardingComplete: isFullyOnboarded, // Based only on onboarding status
             detailsSubmitted: account.details_submitted,
             chargesEnabled: account.charges_enabled,
             payoutsEnabled: account.payouts_enabled,
             country: account.country,
-            currency: account.default_currency,
-            // Include pending requirements info
-            requirements: {
-                currentlyDue: pendingRequirements,
-                eventuallyDue: eventuallyDue,
-                hasPending: hasPendingRequirements
-            },
-            // Add helpful message if there are pending requirements
-            ...(hasPendingRequirements && {
-                requiresAction: true,
-                message: 'Additional verification required. Please complete all pending requirements.'
-            })
+            currency: account.default_currency
         });
 
     } catch (error) {
