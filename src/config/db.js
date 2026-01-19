@@ -27,6 +27,14 @@ if (process.env.DB_SSL === 'true' && process.env.DB_SSL_CA) {
 
 const pool = mysql.createPool(poolConfig);
 
+// Log which database we're connecting to
+console.log("📊 Database config:", {
+  host: poolConfig.host,
+  database: poolConfig.database,
+  port: poolConfig.port,
+  user: poolConfig.user
+});
+
 // Test connection (non-blocking)
 pool.getConnection()
   .then(conn => {
