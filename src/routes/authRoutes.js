@@ -39,6 +39,9 @@ const upload = multer({
 
 const authRouter = Router();
 
+// Test route
+authRouter.get('/test', (req, res) => res.json({ message: 'Auth routes working!' }));
+
 authRouter.post('/', userRegister);
 authRouter.post('/login', login);
 authRouter.post('/become-scholar', authMiddleware, upload.single('taskCard'), becomeScholar);
