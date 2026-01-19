@@ -34,6 +34,11 @@ app.use(
 // Serve uploaded videos statically
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
+// Health check endpoint
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
 // Your API routes
 app.use("/api", router);
 
