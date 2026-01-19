@@ -4,9 +4,28 @@ const { UserModel } = require("../models/User");
 const { UserRoleModel } = require("../models/userRole");
 const { ScholarProfileModel } = require("../models/scholarProfile");
 
+// Password validation helper
+const validatePassword = (password) => {
+    const errors = [];
+    if (!password || password.length < 8) errors.push("at least 8 characters");
+    if (!/[A-Z]/.test(password)) errors.push("one uppercase letter");
+    if (!/[a-z]/.test(password)) errors.push("one lowercase letter");
+    if (!/[0-9]/.test(password)) errors.push("one number");
+    if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) errors.push("one special character");
+    return errors;
+};
+
 const userRegister = async (req, res) => {
     try {
         const {fname, lname, email, password, isScholar, scholarData} = req.body;
+
+        // Validate password strength
+        const passwordErrors = validatePassword(password);
+        if (passwordErrors.length > 0) {
+            return res.status(400).json({
+                message: `Password must contain: ${passwordErrors.join(", ")}`
+            });
+        }
 
         const [existing] = await UserModel.findByEmail(email);
         if (existing.length > 0) {
