@@ -61,18 +61,24 @@ const userRegister = async (req, res) => {
 const login = async (req, res) => {
     try {
         const { email, password} = req.body;
+        
+        console.log('Login attempt for:', email);
 
         //find user
         const [userRows] = await UserModel.findByEmail(email);
+        console.log('User found:', userRows.length > 0);
+        
         if (userRows.length === 0) {
-            return res.status(404).json({message: 'Invalid email or password'});
+            return res.status(401).json({message: 'Invalid email or password'});
         }
         const user = userRows[0];
 
         //compare passwords
         const isPasswordValid = await bcrypt.compare(password, user.password);
+        console.log('Password valid:', isPasswordValid);
+        
         if(!isPasswordValid) {
-            return res.status(404).json({message: 'Invalid email or password'});
+            return res.status(401).json({message: 'Invalid email or password'});
         }
 
         //fetch roles
