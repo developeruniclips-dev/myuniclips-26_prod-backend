@@ -38,10 +38,13 @@ const uploadVideo = async (req, res) => {
     // Upload to Vimeo
     const filePath = req.file.path;
     
+    // Vimeo has a 128 character limit for titles
+    const vimeoTitle = title.length > 128 ? title.substring(0, 125) + '...' : title;
+    
     vimeoClient.upload(
       filePath,
       {
-        name: title,
+        name: vimeoTitle,
         description: description || '',
         privacy: {
           view: 'anybody', // Can be 'anybody', 'nobody', 'password', 'unlisted'
