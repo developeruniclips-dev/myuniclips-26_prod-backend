@@ -63,14 +63,19 @@ const getProgramsByUniversity = async (req, res) => {
     try {
         const { universityId } = req.params;
         
-        // For now, return all programs since subjects aren't linked to universities yet
-        // Later we can filter by university when subjects are properly linked
+        if (!universityId) {
+            return res.status(400).json({ message: "University ID is required" });
+        }
+        
+        // Filter programs by university_id
         const [rows] = await pool.query(`
             SELECT DISTINCT degree_programmes as program 
             FROM subjects 
-            WHERE degree_programmes IS NOT NULL AND degree_programmes != ''
+            WHERE university_id = ? 
+              AND degree_programmes IS NOT NULL 
+              AND degree_programmes != ''
             ORDER BY degree_programmes
-        `);
+        `, [universityId]);
         res.json(rows);
     } catch (error) {
         console.error("Error fetching programs by university:", error);
