@@ -84,6 +84,26 @@ const getProgramsByUniversity = async (req, res) => {
 };
 
 /**
+ * Get all degree programs from subjects table
+ * Returns all distinct degree programs
+ */
+const getAllDegreePrograms = async (req, res) => {
+    try {
+        const [rows] = await pool.query(`
+            SELECT DISTINCT degree_programmes as program 
+            FROM subjects 
+            WHERE degree_programmes IS NOT NULL 
+              AND degree_programmes != ''
+            ORDER BY degree_programmes
+        `);
+        res.json(rows);
+    } catch (error) {
+        console.error("Error fetching all degree programs:", error);
+        res.status(500).json({ message: "Server error fetching degree programs", error: error.message });
+    }
+};
+
+/**
  * Get subjects by program (and optionally university)
  */
 const getSubjectsByUniversityAndProgram = async (req, res) => {
@@ -171,6 +191,7 @@ module.exports = {
     getUniversitiesByCountry,
     getAllUniversities,
     getProgramsByUniversity,
+    getAllDegreePrograms,
     getSubjectsByUniversityAndProgram,
     addCountry,
     addUniversity

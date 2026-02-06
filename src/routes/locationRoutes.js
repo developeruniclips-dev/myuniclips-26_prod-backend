@@ -4,6 +4,7 @@ const {
     getUniversitiesByCountry,
     getAllUniversities,
     getProgramsByUniversity,
+    getAllDegreePrograms,
     getSubjectsByUniversityAndProgram,
     addCountry,
     addUniversity
@@ -18,6 +19,7 @@ locationRoutes.get('/countries', getAllCountries);
 locationRoutes.get('/universities/by-country/:countryId', getUniversitiesByCountry);
 locationRoutes.get('/universities', getAllUniversities);
 locationRoutes.get('/programs/by-university/:universityId', getProgramsByUniversity);
+locationRoutes.get('/programs/all', getAllDegreePrograms);
 locationRoutes.get('/subjects/by-university/:universityId/program/:program', getSubjectsByUniversityAndProgram);
 
 // Admin routes - for managing locations
