@@ -347,7 +347,10 @@ const logActivity = async (userId, action, targetType, targetId, details, ipAddr
  */
 const getSuperAdminStats = async (req, res) => {
     try {
-        // Total users by role
+        // Total users
+        const [totalUsers] = await pool.query('SELECT COUNT(*) as total FROM users');
+        
+        // Users by role
         const [userStats] = await pool.query(`
             SELECT r.name as role, COUNT(ur.user_id) as count
             FROM roles r
@@ -358,21 +361,39 @@ const getSuperAdminStats = async (req, res) => {
         // Total videos
         const [videoStats] = await pool.query('SELECT COUNT(*) as total, SUM(CASE WHEN approved = 1 THEN 1 ELSE 0 END) as approved FROM videos');
         
-        // Total revenue (from purchases)
-        const [revenueStats] = await pool.query('SELECT COALESCE(SUM(price), 0) as total_revenue FROM purchases WHERE status = "completed"');
+        // Total revenue (from subject_purchases - the actual purchase table)
+        const [revenueStats] = await pool.query('SELECT COALESCE(SUM(amount), 0) as total_revenue FROM subject_purchases');
         
         // Pending security updates
-        const [securityStats] = await pool.query('SELECT COUNT(*) as pending FROM security_updates WHERE status != "resolved"');
+        let securityCount = 0;
+        try {
+            const [securityStats] = await pool.query('SELECT COUNT(*) as pending FROM security_updates WHERE status != "resolved"');
+            securityCount = securityStats[0]?.pending || 0;
+        } catch (err) {
+            // Table might not exist yet
+            console.warn('security_updates table may not exist:', err.message);
+        }
+        
+        // Pending scholar applications
+        const [pendingScholars] = await pool.query('SELECT COUNT(*) as pending FROM scholar_profile WHERE application_status = "pending"');
         
         // Recent activity count
-        const [activityStats] = await pool.query('SELECT COUNT(*) as recent FROM admin_activity_log WHERE created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)');
+        let activityCount = 0;
+        try {
+            const [activityStats] = await pool.query('SELECT COUNT(*) as recent FROM admin_activity_log WHERE created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)');
+            activityCount = activityStats[0]?.recent || 0;
+        } catch (err) {
+            console.warn('admin_activity_log table may not exist:', err.message);
+        }
         
         res.json({
+            totalUsers: totalUsers[0]?.total || 0,
             users: userStats,
             videos: videoStats[0],
             revenue: revenueStats[0],
-            security: securityStats[0],
-            activity: activityStats[0]
+            security: { pending: securityCount },
+            pendingScholars: pendingScholars[0]?.pending || 0,
+            activity: { recent: activityCount }
         });
     } catch (error) {
         console.error("Error fetching superadmin stats:", error);
