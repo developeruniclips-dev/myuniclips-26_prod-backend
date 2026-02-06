@@ -10,7 +10,11 @@ const getAdminProfile = async (req, res) => {
         
         const [rows] = await pool.query(`
             SELECT 
-                u.id, u.username, u.email, u.firstname, u.lastname,
+                u.id, 
+                CONCAT(u.fname, ' ', u.lname) as username,
+                u.email, 
+                u.fname as firstname, 
+                u.lname as lastname,
                 ap.display_name, ap.phone, ap.avatar_url, ap.department, ap.bio,
                 ap.created_at as profile_created_at, ap.updated_at as profile_updated_at
             FROM users u
@@ -37,9 +41,9 @@ const updateAdminProfile = async (req, res) => {
         const userId = req.user.id;
         const { display_name, phone, department, bio, firstname, lastname } = req.body;
         
-        // Update user's firstname/lastname
+        // Update user's fname/lname
         await pool.query(
-            'UPDATE users SET firstname = ?, lastname = ? WHERE id = ?',
+            'UPDATE users SET fname = ?, lname = ? WHERE id = ?',
             [firstname, lastname, userId]
         );
         
@@ -101,8 +105,8 @@ const createAdmin = async (req, res) => {
     try {
         const { username, email, password, firstname, lastname, role } = req.body;
         
-        if (!username || !email || !password || !role) {
-            return res.status(400).json({ message: "Username, email, password, and role are required" });
+        if (!email || !password || !role) {
+            return res.status(400).json({ message: "Email, password, and role are required" });
         }
         
         // Check if role is valid
@@ -112,21 +116,23 @@ const createAdmin = async (req, res) => {
         
         // Check if user exists
         const [existing] = await pool.query(
-            'SELECT id FROM users WHERE email = ? OR username = ?',
-            [email, username]
+            'SELECT id FROM users WHERE email = ?',
+            [email]
         );
         
         if (existing.length > 0) {
-            return res.status(409).json({ message: "User with this email or username already exists" });
+            return res.status(409).json({ message: "User with this email already exists" });
         }
         
         // Hash password
         const hashedPassword = await bcrypt.hash(password, 10);
         
-        // Create user
+        // Create user with fname and lname (username is derived from firstname or email)
+        const fname = firstname || username || email.split('@')[0];
+        const lname = lastname || '';
         const [result] = await pool.query(
-            'INSERT INTO users (username, email, password, firstname, lastname) VALUES (?, ?, ?, ?, ?)',
-            [username, email, hashedPassword, firstname || '', lastname || '']
+            'INSERT INTO users (fname, lname, email, password) VALUES (?, ?, ?, ?)',
+            [fname, lname, email, hashedPassword]
         );
         
         const newUserId = result.insertId;
@@ -227,8 +233,8 @@ const getSecurityUpdates = async (req, res) => {
         const [rows] = await pool.query(`
             SELECT 
                 su.*,
-                creator.username as created_by_name,
-                resolver.username as resolved_by_name
+                CONCAT(creator.fname, ' ', creator.lname) as created_by_name,
+                CONCAT(resolver.fname, ' ', resolver.lname) as resolved_by_name
             FROM security_updates su
             LEFT JOIN users creator ON su.created_by = creator.id
             LEFT JOIN users resolver ON su.resolved_by = resolver.id
@@ -321,7 +327,8 @@ const getActivityLog = async (req, res) => {
         const [rows] = await pool.query(`
             SELECT 
                 al.*,
-                u.username, u.email
+                CONCAT(u.fname, ' ', u.lname) as username, 
+                u.email
             FROM admin_activity_log al
             JOIN users u ON al.user_id = u.id
             ORDER BY al.created_at DESC
