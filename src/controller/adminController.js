@@ -71,7 +71,14 @@ const getAllUsers = async (req, res) => {
     try {
         const [rows] = await pool.query(`
             SELECT 
-                u.id, u.username, u.email, u.firstname, u.lastname, u.created_at,
+                u.id, 
+                u.fname, 
+                u.lname,
+                CONCAT(u.fname, ' ', u.lname) as username,
+                u.email, 
+                u.fname as firstname, 
+                u.lname as lastname, 
+                u.created_at,
                 GROUP_CONCAT(r.name) as roles
             FROM users u
             LEFT JOIN user_roles ur ON u.id = ur.user_id
