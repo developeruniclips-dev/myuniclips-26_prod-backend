@@ -2,8 +2,19 @@ const { Router } = require("express");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
+const rateLimit = require("express-rate-limit");
 const { login, userRegister, becomeScholar } = require("../controller/authController");
 const { authMiddleware } = require("../middleware/auth");
+const { registerValidation, loginValidation } = require("../middleware/validators");
+
+// ===== SECURITY: Strict rate limiting for auth endpoints =====
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 10, // 10 attempts per 15 minutes per IP
+    message: { error: "Too many attempts, please try again in 15 minutes" },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
 
 // Ensure upload directory exists
 const taskCardDir = path.join(__dirname, '../../uploads/task-cards');
@@ -42,8 +53,9 @@ const authRouter = Router();
 // Test route
 authRouter.get('/test', (req, res) => res.json({ message: 'Auth routes working!' }));
 
-authRouter.post('/', userRegister);
-authRouter.post('/login', login);
+// Apply rate limiting and validation to sensitive auth endpoints
+authRouter.post('/', authLimiter, registerValidation, userRegister);
+authRouter.post('/login', authLimiter, loginValidation, login);
 authRouter.post('/become-scholar', authMiddleware, upload.single('taskCard'), becomeScholar);
 
 module.exports = authRouter;

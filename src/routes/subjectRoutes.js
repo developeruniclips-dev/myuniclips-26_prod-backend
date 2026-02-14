@@ -17,7 +17,7 @@ subjectRoutes.get('/', getAllSubjects);
 subjectRoutes.get('/programs/all', getAllPrograms);
 subjectRoutes.get('/by-program/:program', getSubjectsByProgram);
 subjectRoutes.get('/:id', getOneSubject);
-subjectRoutes.post('/', createSubject);
+subjectRoutes.post('/', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), createSubject); // Protected: Only admins can create subjects
 
 // Bundle price management
 subjectRoutes.get('/:id/bundle-price', getSubjectBundlePrice);
