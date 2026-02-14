@@ -1,8 +1,15 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 const { UserModel } = require("../models/User");
 const { UserRoleModel } = require("../models/userRole");
 const { ScholarProfileModel } = require("../models/scholarProfile");
+const { hashPassword, verifyPassword } = require("../utils/passwordHasher");
+
+// Security constants
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCKOUT_DURATION_MINUTES = 15;
+const REFRESH_TOKEN_EXPIRY_DAYS = 30;
 
 // Password validation helper
 const validatePassword = (password) => {
@@ -32,7 +39,8 @@ const userRegister = async (req, res) => {
             return res.status(400).json({message: 'User already exists'});
         }
 
-        const hashedPassword = await bcrypt.hash(password, 10);
+        // Use Argon2id for password hashing (more secure than bcrypt)
+        const hashedPassword = await hashPassword(password);
 
         const [result] = await UserModel.create(fname, lname, email, hashedPassword, isScholar);
 
@@ -79,7 +87,7 @@ const userRegister = async (req, res) => {
 
 const login = async (req, res) => {
     try {
-        const { email, password} = req.body;
+        const { email, password, twoFactorCode } = req.body;
         
         console.log('Login attempt for:', email);
 
@@ -92,12 +100,96 @@ const login = async (req, res) => {
         }
         const user = userRows[0];
 
-        //compare passwords
-        const isPasswordValid = await bcrypt.compare(password, user.password);
+        // Check if account is locked
+        if (user.locked_until && new Date(user.locked_until) > new Date()) {
+            const remainingMinutes = Math.ceil((new Date(user.locked_until) - new Date()) / 60000);
+            return res.status(423).json({
+                message: `Account locked. Try again in ${remainingMinutes} minute(s).`,
+                locked: true,
+                remainingMinutes
+            });
+        }
+
+        //compare passwords using Argon2/bcrypt auto-detection
+        const { valid: isPasswordValid, needsRehash } = await verifyPassword(password, user.password);
         console.log('Password valid:', isPasswordValid);
         
         if(!isPasswordValid) {
-            return res.status(401).json({message: 'Invalid email or password'});
+            // Increment failed attempts
+            const newAttempts = (user.failed_login_attempts || 0) + 1;
+            await UserModel.incrementFailedAttempts(user.id);
+            
+            // Lock account if max attempts exceeded
+            if (newAttempts >= MAX_FAILED_ATTEMPTS) {
+                await UserModel.lockAccount(user.id, LOCKOUT_DURATION_MINUTES);
+                return res.status(423).json({
+                    message: `Account locked for ${LOCKOUT_DURATION_MINUTES} minutes due to too many failed attempts.`,
+                    locked: true
+                });
+            }
+            
+            return res.status(401).json({
+                message: 'Invalid email or password',
+                remainingAttempts: MAX_FAILED_ATTEMPTS - newAttempts
+            });
+        }
+
+        // Check if 2FA is enabled
+        if (user.two_factor_enabled) {
+            if (!twoFactorCode) {
+                return res.status(200).json({
+                    message: '2FA code required',
+                    requires2FA: true,
+                    userId: user.id
+                });
+            }
+            
+            // Validate 2FA code
+            const speakeasy = require('speakeasy');
+            const verified = speakeasy.totp.verify({
+                secret: user.two_factor_secret,
+                encoding: 'base32',
+                token: twoFactorCode,
+                window: 1
+            });
+            
+            if (!verified) {
+                // Check backup codes
+                let backupCodes = [];
+                try {
+                    backupCodes = user.two_factor_backup_codes ? JSON.parse(user.two_factor_backup_codes) : [];
+                } catch(e) {
+                    backupCodes = [];
+                }
+                
+                const backupIndex = backupCodes.indexOf(twoFactorCode);
+                if (backupIndex === -1) {
+                    return res.status(401).json({ message: 'Invalid 2FA code' });
+                }
+                
+                // Remove used backup code
+                backupCodes.splice(backupIndex, 1);
+                await UserModel.update2FA(user.id, user.two_factor_secret, true, JSON.stringify(backupCodes));
+            }
+        }
+
+        // Reset failed attempts on successful login
+        await UserModel.resetFailedAttempts(user.id);
+        await UserModel.updateLastLogin(user.id);
+
+        // Upgrade password hash from bcrypt to Argon2 if needed
+        if (needsRehash) {
+            try {
+                const newHash = await hashPassword(password);
+                await require('../config/db').pool.query(
+                    'UPDATE users SET password = ? WHERE id = ?',
+                    [newHash, user.id]
+                );
+                console.log(`Upgraded password hash to Argon2 for user ${user.id}`);
+            } catch (rehashError) {
+                // Non-critical error, log and continue
+                console.error('Failed to upgrade password hash:', rehashError.message);
+            }
         }
 
         //fetch roles
@@ -117,22 +209,33 @@ const login = async (req, res) => {
             if(scholarRows.length > 0) scholarProfile = scholarRows[0];
         }
 
-        // generate the JWT token
+        // generate the JWT token (short-lived access token)
         const token = jwt.sign(
             { id: user.id, email: user.email, name: user.name, roles },
             process.env.JWT_SECRET,
-            { expiresIn: "7d" }
+            { expiresIn: "1h" }  // Changed from 7d to 1h for security
         );
+
+        // Generate refresh token
+        const refreshToken = crypto.randomBytes(64).toString('hex');
+        const refreshTokenExpires = new Date();
+        refreshTokenExpires.setDate(refreshTokenExpires.getDate() + REFRESH_TOKEN_EXPIRY_DAYS);
+        await UserModel.updateRefreshToken(user.id, refreshToken, refreshTokenExpires);
 
         //remove password from the user object
         delete user.password;
+        delete user.two_factor_secret;
+        delete user.two_factor_backup_codes;
+        delete user.refresh_token;
 
         res.status(200).json({
             message: "Login successful",
             user,
             roles,
             scholarProfile,
-            token
+            token,
+            refreshToken,
+            expiresIn: 3600 // 1 hour in seconds
         });
 
     } catch (error) {
@@ -187,4 +290,74 @@ const becomeScholar = async (req, res) => {
     }
 };
 
-module.exports = { userRegister, login, becomeScholar };
+// Refresh access token using refresh token
+const refreshAccessToken = async (req, res) => {
+    try {
+        const { refreshToken } = req.body;
+        
+        if (!refreshToken) {
+            return res.status(400).json({ message: 'Refresh token required' });
+        }
+        
+        // Find user with this refresh token
+        const [users] = await require('../config/db').pool.query(
+            "SELECT * FROM users WHERE refresh_token = ? AND refresh_token_expires > NOW()",
+            [refreshToken]
+        );
+        
+        if (users.length === 0) {
+            return res.status(401).json({ message: 'Invalid or expired refresh token' });
+        }
+        
+        const user = users[0];
+        
+        // Fetch roles
+        const [roleRows] = await UserRoleModel.getRolesById(user.id);
+        const roles = roleRows.map(row => row.name);
+        
+        // Generate new access token
+        const token = jwt.sign(
+            { id: user.id, email: user.email, name: user.name, roles },
+            process.env.JWT_SECRET,
+            { expiresIn: "1h" }
+        );
+        
+        // Optionally rotate refresh token for better security
+        const newRefreshToken = crypto.randomBytes(64).toString('hex');
+        const refreshTokenExpires = new Date();
+        refreshTokenExpires.setDate(refreshTokenExpires.getDate() + REFRESH_TOKEN_EXPIRY_DAYS);
+        await UserModel.updateRefreshToken(user.id, newRefreshToken, refreshTokenExpires);
+        
+        // Update last activity
+        await UserModel.updateLastActivity(user.id);
+        
+        res.status(200).json({
+            token,
+            refreshToken: newRefreshToken,
+            expiresIn: 3600
+        });
+        
+    } catch (error) {
+        console.error('Error refreshing token:', error);
+        res.status(500).json({ message: 'Server error refreshing token' });
+    }
+};
+
+// Logout - invalidate refresh token
+const logout = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        
+        if (userId) {
+            await UserModel.clearRefreshToken(userId);
+        }
+        
+        res.status(200).json({ message: 'Logged out successfully' });
+        
+    } catch (error) {
+        console.error('Error logging out:', error);
+        res.status(500).json({ message: 'Server error logging out' });
+    }
+};
+
+module.exports = { userRegister, login, becomeScholar, refreshAccessToken, logout };

@@ -4,12 +4,39 @@ const cors = require("cors");
 const path = require("path");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
+const morgan = require("morgan");
+const fs = require("fs");
 
 const router = require("./routes");
 const purchaseRoutes = require("./routes/purchaseRoutes");
 const { stripeWebhook } = require("./controller/stripeWebhookController");
 
 const app = express();
+
+// ===== SECURITY: API Request Logging =====
+// Create logs directory if it doesn't exist
+const logsDir = path.join(__dirname, '../logs');
+if (!fs.existsSync(logsDir)) {
+  fs.mkdirSync(logsDir, { recursive: true });
+}
+
+// Log to file in production, console in development
+if (process.env.NODE_ENV === 'production') {
+  const accessLogStream = fs.createWriteStream(
+    path.join(logsDir, 'access.log'), 
+    { flags: 'a' }
+  );
+  // Custom format that excludes sensitive data
+  app.use(morgan(':remote-addr - :method :url :status :res[content-length] - :response-time ms', { 
+    stream: accessLogStream,
+    skip: (req, res) => {
+      // Don't log health checks or static files
+      return req.url === '/health' || req.url.startsWith('/uploads');
+    }
+  }));
+} else {
+  app.use(morgan('dev'));
+}
 
 // ===== SECURITY: Helmet.js for HTTP headers =====
 app.use(helmet({

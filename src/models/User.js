@@ -39,6 +39,63 @@ const UserModel = {
 
     findByEmail: (email) => {
         return pool.query("SELECT * FROM users WHERE email = ?", [email]);
+    },
+
+    // Security methods
+    incrementFailedAttempts: (id) => {
+        return pool.query(
+            "UPDATE users SET failed_login_attempts = COALESCE(failed_login_attempts, 0) + 1, last_failed_login = NOW() WHERE id = ?",
+            [id]
+        );
+    },
+
+    lockAccount: (id, minutes = 15) => {
+        return pool.query(
+            "UPDATE users SET locked_until = DATE_ADD(NOW(), INTERVAL ? MINUTE) WHERE id = ?",
+            [minutes, id]
+        );
+    },
+
+    resetFailedAttempts: (id) => {
+        return pool.query(
+            "UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?",
+            [id]
+        );
+    },
+
+    updateLastLogin: (id) => {
+        return pool.query(
+            "UPDATE users SET last_login = NOW(), last_activity = NOW() WHERE id = ?",
+            [id]
+        );
+    },
+
+    updateRefreshToken: (id, token, expiresAt) => {
+        return pool.query(
+            "UPDATE users SET refresh_token = ?, refresh_token_expires = ? WHERE id = ?",
+            [token, expiresAt, id]
+        );
+    },
+
+    clearRefreshToken: (id) => {
+        return pool.query(
+            "UPDATE users SET refresh_token = NULL, refresh_token_expires = NULL WHERE id = ?",
+            [id]
+        );
+    },
+
+    updateLastActivity: (id) => {
+        return pool.query(
+            "UPDATE users SET last_activity = NOW() WHERE id = ?",
+            [id]
+        );
+    },
+
+    update2FA: (id, secret, enabled, backupCodes = null) => {
+        return pool.query(
+            "UPDATE users SET two_factor_secret = ?, two_factor_enabled = ?, two_factor_backup_codes = ? WHERE id = ?",
+            [secret, enabled ? 1 : 0, backupCodes, id]
+        );
     }
 };
 

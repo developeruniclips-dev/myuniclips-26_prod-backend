@@ -12,6 +12,7 @@ const libraryRoutes = require('./libraryRoutes');
 const passwordRoutes = require('./passwordRoutes');
 const locationRoutes = require('./locationRoutes');
 const adminRoutes = require('./adminRoutes');
+const twoFactorRoutes = require('./twoFactorRoutes');
 
 const routes = Router();
 
@@ -28,5 +29,6 @@ routes.use("/library", libraryRoutes);
 routes.use("/password", passwordRoutes);
 routes.use("/locations", locationRoutes);
 routes.use("/admin", adminRoutes);
+routes.use("/2fa", twoFactorRoutes);
 
 module.exports = routes;

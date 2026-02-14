@@ -12,17 +12,23 @@
   "license": "ISC",
   "dependencies": {
     "@vimeo/vimeo": "^3.0.3",
+    "argon2": "^0.44.0",
     "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
+    "csurf": "^1.11.0",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "express-rate-limit": "^8.2.1",
     "express-validator": "^7.3.1",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.1",
     "multer": "^1.4.5-lts.1",
     "mysql2": "^3.15.3",
     "nodemailer": "^7.0.12",
+    "qrcode": "^1.5.4",
+    "speakeasy": "^2.0.0",
     "stripe": "^17.6.0"
   },
   "devDependencies": {

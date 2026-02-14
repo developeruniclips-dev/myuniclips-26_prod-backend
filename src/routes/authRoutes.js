@@ -3,9 +3,10 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const rateLimit = require("express-rate-limit");
-const { login, userRegister, becomeScholar } = require("../controller/authController");
+const { login, userRegister, becomeScholar, refreshAccessToken, logout } = require("../controller/authController");
 const { authMiddleware } = require("../middleware/auth");
 const { registerValidation, loginValidation } = require("../middleware/validators");
+const { generateSecureFilename, createSecureFileFilter, postUploadValidation } = require("../middleware/secureUpload");
 
 // ===== SECURITY: Strict rate limiting for auth endpoints =====
 const authLimiter = rateLimit({
@@ -22,31 +23,26 @@ if (!fs.existsSync(taskCardDir)) {
     fs.mkdirSync(taskCardDir, { recursive: true });
 }
 
-// Configure multer for task card uploads
+// Configure multer for task card uploads with secure filenames
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         cb(null, taskCardDir);
     },
     filename: function (req, file, cb) {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, 'taskcard-' + uniqueSuffix + path.extname(file.originalname));
+        // Use cryptographically secure random filename
+        const secureName = generateSecureFilename(file.originalname);
+        cb(null, secureName);
     }
 });
-
-const fileFilter = (req, file, cb) => {
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf'];
-    if (allowedTypes.includes(file.mimetype)) {
-        cb(null, true);
-    } else {
-        cb(new Error('Invalid file type. Only JPG, PNG and PDF are allowed.'), false);
-    }
-};
 
 const upload = multer({ 
     storage: storage,
-    fileFilter: fileFilter,
+    fileFilter: createSecureFileFilter('taskCard'),
     limits: { fileSize: 5 * 1024 * 1024 } // 5MB max
 });
+
+// Post-upload content validation
+const validateTaskCardContent = postUploadValidation('taskCard');
 
 const authRouter = Router();
 
@@ -56,6 +52,10 @@ authRouter.get('/test', (req, res) => res.json({ message: 'Auth routes working!'
 // Apply rate limiting and validation to sensitive auth endpoints
 authRouter.post('/', authLimiter, registerValidation, userRegister);
 authRouter.post('/login', authLimiter, loginValidation, login);
-authRouter.post('/become-scholar', authMiddleware, upload.single('taskCard'), becomeScholar);
+authRouter.post('/become-scholar', authMiddleware, upload.single('taskCard'), validateTaskCardContent, becomeScholar);
+
+// Token refresh and logout
+authRouter.post('/refresh-token', authLimiter, refreshAccessToken);
+authRouter.post('/logout', authMiddleware, logout);
 
 module.exports = authRouter;

@@ -14,18 +14,22 @@ const {
 } = require("../controller/adminController");
 const { authMiddleware } = require("../middleware/auth");
 const { authorizeRoles } = require("../middleware/roles");
+const { adminIPWhitelist, strictIPWhitelist } = require("../middleware/ipWhitelist");
 
 const adminRoutes = Router();
+
+// Apply IP whitelist to all admin routes when enabled
+adminRoutes.use(adminIPWhitelist);
 
 // Profile routes (Admin + SuperAdmin)
 adminRoutes.get('/profile', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), getAdminProfile);
 adminRoutes.put('/profile', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), updateAdminProfile);
 
-// User management routes (SuperAdmin only)
+// User management routes (SuperAdmin only) - strict IP whitelist for sensitive operations
 adminRoutes.get('/users', authMiddleware, authorizeRoles("SuperAdmin"), getAllUsers);
-adminRoutes.post('/users/create-admin', authMiddleware, authorizeRoles("SuperAdmin"), createAdmin);
-adminRoutes.put('/users/:userId/role', authMiddleware, authorizeRoles("SuperAdmin"), updateUserRole);
-adminRoutes.delete('/users/:userId', authMiddleware, authorizeRoles("SuperAdmin"), deleteUser);
+adminRoutes.post('/users/create-admin', authMiddleware, strictIPWhitelist, authorizeRoles("SuperAdmin"), createAdmin);
+adminRoutes.put('/users/:userId/role', authMiddleware, strictIPWhitelist, authorizeRoles("SuperAdmin"), updateUserRole);
+adminRoutes.delete('/users/:userId', authMiddleware, strictIPWhitelist, authorizeRoles("SuperAdmin"), deleteUser);
 
 // Security updates routes (Admin + SuperAdmin)
 adminRoutes.get('/security-updates', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), getSecurityUpdates);

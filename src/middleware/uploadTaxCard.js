@@ -1,6 +1,7 @@
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { generateSecureFilename, createSecureFileFilter, postUploadValidation } = require('./secureUpload');
 
 // Ensure uploads directory exists
 const uploadDir = 'uploads/tax-cards';
@@ -8,34 +9,25 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Configure storage
+// Configure storage with secure filenames
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'tax-card-' + uniqueSuffix + path.extname(file.originalname));
+    // Use cryptographically secure random filename
+    const secureName = generateSecureFilename(file.originalname);
+    cb(null, secureName);
   }
 });
-
-// File filter
-const fileFilter = (req, file, cb) => {
-  const allowedTypes = /pdf|jpg|jpeg|png/;
-  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-  const mimetype = allowedTypes.test(file.mimetype);
-
-  if (extname && mimetype) {
-    cb(null, true);
-  } else {
-    cb(new Error('Only PDF, JPG, JPEG, and PNG files are allowed'));
-  }
-};
 
 const uploadTaxCard = multer({
   storage: storage,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
-  fileFilter: fileFilter
+  fileFilter: createSecureFileFilter('taskCard') // taskCard allows PDF and images
 }).single('taxCard');
 
-module.exports = { uploadTaxCard };
+// Export post-upload validation middleware
+const validateTaxCardContent = postUploadValidation('taskCard');
+
+module.exports = { uploadTaxCard, validateTaxCardContent };

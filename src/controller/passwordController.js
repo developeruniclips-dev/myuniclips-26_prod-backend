@@ -4,6 +4,7 @@ const { UserModel } = require("../models/User");
 const { UserRoleModel } = require("../models/userRole");
 const { pool } = require("../config/db");
 const { sendPasswordResetEmail } = require("../utils/emailService");
+const { hashPassword, verifyPassword } = require("../utils/passwordHasher");
 
 // Helper function to ensure password reset columns exist
 const ensurePasswordResetColumnsExist = async () => {
@@ -75,9 +76,9 @@ const requestPasswordReset = async (req, res) => {
         const hashedToken = crypto.createHash('sha256').update(resetToken).digest('hex');
         const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
 
-        // Store token in database
+        // Store token in database, reset the used flag
         await pool.query(
-            `UPDATE users SET password_reset_token = ?, password_reset_expires = ? WHERE id = ?`,
+            `UPDATE users SET password_reset_token = ?, password_reset_expires = ?, reset_token_used = 0 WHERE id = ?`,
             [hashedToken, expiresAt, user.id]
         );
 
@@ -149,9 +150,9 @@ const resetPassword = async (req, res) => {
         // Hash the provided token and compare
         const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
 
-        // Check if token matches and is not expired
+        // Check if token matches and is not expired and not already used
         const [tokenCheck] = await pool.query(
-            `SELECT id FROM users WHERE id = ? AND password_reset_token = ? AND password_reset_expires > NOW()`,
+            `SELECT id, reset_token_used FROM users WHERE id = ? AND password_reset_token = ? AND password_reset_expires > NOW()`,
             [user.id, hashedToken]
         );
 
@@ -159,10 +160,15 @@ const resetPassword = async (req, res) => {
             return res.status(400).json({ message: "Invalid or expired reset token" });
         }
 
-        // Hash new password and update
-        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        // Check if token was already used (single-use tokens)
+        if (tokenCheck[0].reset_token_used === 1) {
+            return res.status(400).json({ message: "This reset token has already been used. Please request a new one." });
+        }
+
+        // Hash new password with Argon2 and update, mark token as used
+        const hashedPassword = await hashPassword(newPassword);
         await pool.query(
-            `UPDATE users SET password = ?, password_reset_token = NULL, password_reset_expires = NULL WHERE id = ?`,
+            `UPDATE users SET password = ?, password_reset_token = NULL, password_reset_expires = NULL, reset_token_used = 1 WHERE id = ?`,
             [hashedPassword, user.id]
         );
 
@@ -205,14 +211,14 @@ const changePassword = async (req, res) => {
 
         const user = userRows[0];
 
-        // Verify current password
-        const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
+        // Verify current password using Argon2/bcrypt auto-detection
+        const { valid: isPasswordValid } = await verifyPassword(currentPassword, user.password);
         if (!isPasswordValid) {
             return res.status(400).json({ message: "Current password is incorrect" });
         }
 
-        // Hash and update new password
-        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        // Hash and update new password with Argon2
+        const hashedPassword = await hashPassword(newPassword);
         await pool.query(`UPDATE users SET password = ? WHERE id = ?`, [hashedPassword, userId]);
 
         res.status(200).json({ message: "Password changed successfully" });

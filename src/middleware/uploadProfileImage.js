@@ -1,6 +1,7 @@
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { generateSecureFilename, createSecureFileFilter, postUploadValidation } = require('./secureUpload');
 
 // Ensure uploads directory exists
 const uploadDir = 'uploads/profile-images';
@@ -8,38 +9,29 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Configure storage
+// Configure storage with secure filenames
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'profile-' + req.user.id + '-' + uniqueSuffix + path.extname(file.originalname));
+    // Use cryptographically secure random filename
+    const secureName = generateSecureFilename(file.originalname);
+    cb(null, secureName);
   }
 });
 
-// File filter - only images
-const fileFilter = (req, file, cb) => {
-  const allowedTypes = /jpeg|jpg|png|gif/;
-  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-  const mimetype = allowedTypes.test(file.mimetype);
-
-  if (extname && mimetype) {
-    cb(null, true);
-  } else {
-    cb(new Error('Only image files (JPEG, JPG, PNG, GIF) are allowed'));
-  }
-};
-
-// Multer configuration
+// Multer configuration with secure file filter
 const uploadProfileImage = multer({
   storage: storage,
   limits: { 
     fileSize: 5 * 1024 * 1024, // 5MB limit
   },
-  fileFilter: fileFilter
+  fileFilter: createSecureFileFilter('image')
 }).single('profileImage');
+
+// Post-upload content validation
+const validateImageContent = postUploadValidation('image');
 
 // Error handling wrapper
 const uploadProfileImageMiddleware = (req, res, next) => {
@@ -52,7 +44,8 @@ const uploadProfileImageMiddleware = (req, res, next) => {
     } else if (err) {
       return res.status(400).json({ message: err.message });
     }
-    next();
+    // Validate file content after upload
+    validateImageContent(req, res, next);
   });
 };
 
