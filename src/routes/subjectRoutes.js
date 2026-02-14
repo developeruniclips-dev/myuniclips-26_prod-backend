@@ -21,6 +21,7 @@ subjectRoutes.post('/', createSubject);
 
 // Bundle price management
 subjectRoutes.get('/:id/bundle-price', getSubjectBundlePrice);
-subjectRoutes.put('/:id/bundle-price', authMiddleware, authorizeRoles("Admin"), updateBundlePrice);
+subjectRoutes.put('/:id/bundle-price', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), updateBundlePrice);
+subjectRoutes.put('/:id/price', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), updateBundlePrice);
 
 module.exports = subjectRoutes;
