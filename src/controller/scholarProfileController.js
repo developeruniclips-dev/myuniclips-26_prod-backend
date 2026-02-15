@@ -13,6 +13,8 @@ const getAllScholarApplications = async (req, res) => {
         sp.approved,
         sp.created_at,
         sp.task_card_url,
+        sp.stripe_account_id,
+        sp.stripe_onboarding_complete,
         u.fname,
         u.lname,
         u.email,

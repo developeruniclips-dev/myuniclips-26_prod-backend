@@ -46,12 +46,13 @@ app.use(helmet({
       scriptSrc: ["'self'", "'unsafe-inline'", "https://js.stripe.com"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
-      imgSrc: ["'self'", "data:", "https:", "blob:"],
+      imgSrc: ["'self'", "data:", "https:", "blob:", "https://*.onrender.com"],
       connectSrc: ["'self'", "https://api.stripe.com", "https://*.onrender.com"],
       frameSrc: ["'self'", "https://js.stripe.com", "https://hooks.stripe.com"],
     },
   },
   crossOriginEmbedderPolicy: false, // Allow embedding for video players
+  crossOriginResourcePolicy: { policy: "cross-origin" }, // Allow cross-origin resource loading
 }));
 
 // ===== SECURITY: Rate Limiting =====
@@ -98,8 +99,12 @@ app.use(
   })
 );
 
-// Serve uploaded videos statically
-app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
+// Serve uploaded files statically with CORS headers
+app.use("/uploads", (req, res, next) => {
+  // Set Cross-Origin-Resource-Policy to allow cross-origin requests
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+}, express.static(path.join(__dirname, "../uploads")));
 
 // Health check endpoint
 app.get("/health", (req, res) => {

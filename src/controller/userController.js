@@ -75,6 +75,11 @@ const deleteUser = async(req, res) => {
         const [existing] = await UserModel.findById(id);
         if (existing.length === 0) return res.status(404).json({ message: "User not found" });
 
+        // Protect the original SuperAdmin (abdulsatar) from deletion
+        if (existing[0]?.email && existing[0].email.toLowerCase().includes('abdulsatar')) {
+            return res.status(403).json({ message: "Cannot delete the original SuperAdmin account" });
+        }
+
         await UserModel.delete(id);
         res.json({ message: "User deleted successfully" });
         
@@ -144,28 +149,14 @@ const updateUserProfile = async (req, res) => {
             bio,
             favoriteSubject,
             favoriteFood,
-            hobbies,
-            iban
+            hobbies
         } = req.body;
         
-        let taxCardUrl = null;
         let profileImageUrl = null;
         
-        // Handle multiple files from different fields
-        if (req.files) {
-            if (req.files.taxCard) {
-                taxCardUrl = req.files.taxCard[0].path.replace(/\\/g, '/');
-            }
-            if (req.files.profileImage) {
-                profileImageUrl = req.files.profileImage[0].path.replace(/\\/g, '/');
-            }
-        } else if (req.file) {
-            // Single file upload
-            if (req.file.fieldname === 'taxCard') {
-                taxCardUrl = req.file.path.replace(/\\/g, '/');
-            } else if (req.file.fieldname === 'profileImage') {
-                profileImageUrl = req.file.path.replace(/\\/g, '/');
-            }
+        // Handle profile image upload
+        if (req.file) {
+            profileImageUrl = req.file.path.replace(/\\/g, '/');
         }
         
         const updateFields = {};
@@ -176,8 +167,6 @@ const updateUserProfile = async (req, res) => {
         if (favoriteSubject !== undefined) updateFields.favorite_subject = favoriteSubject;
         if (favoriteFood !== undefined) updateFields.favorite_food = favoriteFood;
         if (hobbies !== undefined) updateFields.hobbies = hobbies;
-        if (iban !== undefined) updateFields.iban = iban;
-        if (taxCardUrl) updateFields.tax_card_url = taxCardUrl;
         if (profileImageUrl) updateFields.profile_image_url = profileImageUrl;
         
         // Build dynamic update query
@@ -216,6 +205,11 @@ const deleteUserBySuperAdmin = async (req, res) => {
         const [existing] = await UserModel.findById(id);
         if (existing.length === 0) {
             return res.status(404).json({ message: "User not found" });
+        }
+
+        // Protect the original SuperAdmin (abdulsatar) from deletion
+        if (existing[0]?.email && existing[0].email.toLowerCase().includes('abdulsatar')) {
+            return res.status(403).json({ message: "Cannot delete the original SuperAdmin account" });
         }
 
         // Check if target user is a SuperAdmin - prevent deleting other SuperAdmins

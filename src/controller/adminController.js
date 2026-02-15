@@ -210,8 +210,13 @@ const deleteUser = async (req, res) => {
             return res.status(400).json({ message: "Cannot delete your own account" });
         }
         
-        // Get user info for logging
+        // Get user info for logging and protection check
         const [user] = await pool.query('SELECT email FROM users WHERE id = ?', [userId]);
+        
+        // Protect the original SuperAdmin (abdulsatar)
+        if (user[0]?.email && user[0].email.toLowerCase().includes('abdulsatar')) {
+            return res.status(403).json({ message: "Cannot delete the original SuperAdmin account" });
+        }
         
         await pool.query('DELETE FROM users WHERE id = ?', [userId]);
         

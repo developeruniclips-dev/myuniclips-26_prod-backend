@@ -153,7 +153,9 @@ const getAllScholarSubjectsAdmin = async (req, res) => {
                 u.fname,
                 u.lname,
                 u.email,
-                u.profile_image_url
+                u.profile_image_url,
+                (SELECT COUNT(*) FROM videos WHERE scholar_user_id = ss.scholar_user_id AND subject_id = ss.subject_id) as video_count,
+                (SELECT COUNT(*) FROM videos WHERE scholar_user_id = ss.scholar_user_id AND subject_id = ss.subject_id AND approved = 1) as approved_video_count
             FROM scholar_subjects ss
             JOIN users u ON ss.scholar_user_id = u.id
             ORDER BY ss.created_at DESC
