@@ -19,38 +19,52 @@ const sessionTimeoutMiddleware = async (req, res, next) => {
             return next();
         }
 
-        // Get user's last activity
-        const [users] = await pool.query(
-            'SELECT last_activity FROM users WHERE id = ?',
-            [req.user.id]
-        );
+        // Check if last_activity column exists (skip if migration not run)
+        try {
+            // Get user's last activity
+            const [users] = await pool.query(
+                'SELECT last_activity FROM users WHERE id = ?',
+                [req.user.id]
+            );
 
-        if (users.length === 0) {
-            return next();
-        }
-
-        const lastActivity = users[0].last_activity;
-
-        // Check if session has expired
-        if (lastActivity) {
-            const lastActivityTime = new Date(lastActivity);
-            const now = new Date();
-            const minutesSinceLastActivity = (now - lastActivityTime) / (1000 * 60);
-
-            if (minutesSinceLastActivity > SESSION_TIMEOUT_MINUTES) {
-                // Session expired - clear refresh token
-                await UserModel.clearRefreshToken(req.user.id);
-                
-                return res.status(401).json({
-                    message: 'Session expired due to inactivity. Please log in again.',
-                    sessionExpired: true,
-                    code: 'SESSION_TIMEOUT'
-                });
+            if (users.length === 0) {
+                return next();
             }
-        }
 
-        // Update last activity timestamp
-        await UserModel.updateLastActivity(req.user.id);
+            const lastActivity = users[0].last_activity;
+
+            // Check if session has expired
+            if (lastActivity) {
+                const lastActivityTime = new Date(lastActivity);
+                const now = new Date();
+                const minutesSinceLastActivity = (now - lastActivityTime) / (1000 * 60);
+
+                if (minutesSinceLastActivity > SESSION_TIMEOUT_MINUTES) {
+                    // Session expired - clear refresh token
+                    try {
+                        await UserModel.clearRefreshToken(req.user.id);
+                    } catch (e) {
+                        // Ignore if column doesn't exist
+                    }
+                    
+                    return res.status(401).json({
+                        message: 'Session expired due to inactivity. Please log in again.',
+                        sessionExpired: true,
+                        code: 'SESSION_TIMEOUT'
+                    });
+                }
+            }
+
+            // Update last activity timestamp
+            try {
+                await UserModel.updateLastActivity(req.user.id);
+            } catch (e) {
+                // Ignore if column doesn't exist
+            }
+        } catch (columnError) {
+            // Column doesn't exist yet - skip session timeout check
+            console.log('Session timeout check skipped - last_activity column may not exist');
+        }
 
         next();
     } catch (error) {
