@@ -49,21 +49,21 @@ stripeConnectRoutes.get(
 stripeConnectRoutes.post(
     '/payout',
     authMiddleware,
-    authorizeRoles('Admin'),
+    authorizeRoles('Admin', 'SuperAdmin'),
     createPayout
 );
 
 stripeConnectRoutes.get(
     '/scholars-status',
     authMiddleware,
-    authorizeRoles('Admin'),
+    authorizeRoles('Admin', 'SuperAdmin'),
     getAllScholarsStripeStatus
 );
 
 stripeConnectRoutes.get(
     '/platform-balance',
     authMiddleware,
-    authorizeRoles('Admin'),
+    authorizeRoles('Admin', 'SuperAdmin'),
     getPlatformBalance
 );
 

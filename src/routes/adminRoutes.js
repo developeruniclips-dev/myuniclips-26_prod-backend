@@ -25,8 +25,8 @@ adminRoutes.use(adminIPWhitelist);
 adminRoutes.get('/profile', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), getAdminProfile);
 adminRoutes.put('/profile', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), updateAdminProfile);
 
-// User management routes (SuperAdmin only) - strict IP whitelist for sensitive operations
-adminRoutes.get('/users', authMiddleware, authorizeRoles("SuperAdmin"), getAllUsers);
+// User management routes
+adminRoutes.get('/users', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), getAllUsers);
 adminRoutes.post('/users/create-admin', authMiddleware, strictIPWhitelist, authorizeRoles("SuperAdmin"), createAdmin);
 adminRoutes.put('/users/:userId/role', authMiddleware, strictIPWhitelist, authorizeRoles("SuperAdmin"), updateUserRole);
 adminRoutes.delete('/users/:userId', authMiddleware, strictIPWhitelist, authorizeRoles("SuperAdmin"), deleteUser);

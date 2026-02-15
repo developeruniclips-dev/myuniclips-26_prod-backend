@@ -12,7 +12,7 @@ videoRoutes.get('/all-videos', getAllVideos);
 videoRoutes.get(
   '/admin/all',
   authMiddleware,
-  authorizeRoles("Admin"),
+  authorizeRoles("Admin", "SuperAdmin"),
   getAllVideosAdmin
 );
 

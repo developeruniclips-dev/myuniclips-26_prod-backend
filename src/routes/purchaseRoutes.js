@@ -35,7 +35,7 @@ purchaseRoutes.get('/subject/check', authMiddleware, authorizeRoles("Learner","S
 purchaseRoutes.get('/subject/my-purchases', authMiddleware, authorizeRoles("Learner","Scholar"), getMySubjectPurchases);
 
 // Admin: Get all transactions
-purchaseRoutes.get('/transactions/all', authMiddleware, authorizeRoles("Admin"), getAllTransactions);
+purchaseRoutes.get('/transactions/all', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), getAllTransactions);
 
 // Legacy Stripe PaymentIntent (for individual videos)
 purchaseRoutes.post("/create-payment-intent", authMiddleware, createPaymentIntent);
