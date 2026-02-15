@@ -84,11 +84,10 @@ const getAllUsers = async (req, res) => {
                 u.lname as lastname, 
                 u.created_at,
                 GROUP_CONCAT(r.name) as roles,
-                CASE WHEN sp.id IS NOT NULL AND sp.approved = 1 THEN 1 ELSE 0 END as is_scholar
+                (SELECT COUNT(*) FROM scholar_profile sp WHERE sp.user_id = u.id AND sp.approved = 1) as is_scholar
             FROM users u
             LEFT JOIN user_roles ur ON u.id = ur.user_id
             LEFT JOIN roles r ON ur.role_id = r.id
-            LEFT JOIN scholar_profile sp ON u.id = sp.user_id
             GROUP BY u.id
             ORDER BY u.created_at DESC
         `);
