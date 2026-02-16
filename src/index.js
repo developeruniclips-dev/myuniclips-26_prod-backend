@@ -145,10 +145,19 @@ app.use((req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
   console.log(`📁 Uploads stored locally in: ${path.join(__dirname, "../uploads")}`);
   console.log(`🔒 Security: Helmet.js enabled, Rate limiting active`);
+
+  // Auto-migrate: ensure TEXT columns where needed
+  try {
+    const { pool } = require('./config/db');
+    await pool.query("ALTER TABLE scholar_subjects MODIFY COLUMN expertise TEXT");
+    console.log('✅ Migration: expertise column set to TEXT');
+  } catch (e) {
+    // Ignore if already done or table doesn't exist
+  }
 });
 
 module.exports = { app, authLimiter };
