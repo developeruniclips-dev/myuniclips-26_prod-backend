@@ -13,6 +13,9 @@ const { stripeWebhook } = require("./controller/stripeWebhookController");
 
 const app = express();
 
+// Trust first proxy (Render uses reverse proxy) - required for rate limiting to work correctly
+app.set('trust proxy', 1);
+
 // ===== SECURITY: API Request Logging =====
 // Create logs directory if it doesn't exist
 const logsDir = path.join(__dirname, '../logs');
