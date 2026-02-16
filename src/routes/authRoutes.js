@@ -8,10 +8,10 @@ const { authMiddleware } = require("../middleware/auth");
 const { registerValidation, loginValidation } = require("../middleware/validators");
 const { generateSecureFilename, createSecureFileFilter, postUploadValidation } = require("../middleware/secureUpload");
 
-// ===== SECURITY: Strict rate limiting for auth endpoints =====
+// ===== SECURITY: Rate limiting for auth endpoints =====
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 10, // 10 attempts per 15 minutes per IP
+    max: 50, // 50 attempts per 15 minutes per IP
     message: { error: "Too many attempts, please try again in 15 minutes" },
     standardHeaders: true,
     legacyHeaders: false,
