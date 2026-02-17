@@ -4,7 +4,7 @@ const vimeoClient = require("../config/vimeo");
 const fs = require("fs");
 const path = require("path");
 
-const MAX_VIDEOS_PER_SUBJECT = 7;
+const MAX_VIDEOS_PER_SUBJECT = 10;
 
 // Upload video to Vimeo
 const uploadVideo = async (req, res) => {

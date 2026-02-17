@@ -201,6 +201,7 @@ const updateUserRole = async (req, res) => {
 
 /**
  * Delete user (SuperAdmin only)
+ * Cleans up all related tables to prevent orphaned data
  */
 const deleteUser = async (req, res) => {
     try {
@@ -212,17 +213,39 @@ const deleteUser = async (req, res) => {
         }
         
         // Get user info for logging and protection check
-        const [user] = await pool.query('SELECT email FROM users WHERE id = ?', [userId]);
+        const [userRows] = await pool.query('SELECT email, fname, lname FROM users WHERE id = ?', [userId]);
         
         // Protect the original SuperAdmin (abdulsatar)
-        if (user[0]?.email && user[0].email.toLowerCase().includes('abdulsatar')) {
+        if (userRows[0]?.email && userRows[0].email.toLowerCase().includes('abdulsatar')) {
             return res.status(403).json({ message: "Cannot delete the original SuperAdmin account" });
         }
         
+        // Clean up all related tables (order matters for FK constraints)
+        // Tables with ON DELETE CASCADE (user_library, video_progress, scholar_payouts) are auto-handled
+        const cleanupTables = [
+            'DELETE FROM admin_activity_log WHERE user_id = ?',
+            'DELETE FROM admin_profiles WHERE user_id = ?',
+            'DELETE FROM subject_purchases WHERE buyer_user_id = ?',
+            'DELETE FROM videos WHERE scholar_user_id = ?',
+            'DELETE FROM scholar_subjects WHERE scholar_user_id = ?',
+            'DELETE FROM scholar_profile WHERE user_id = ?',
+            'DELETE FROM user_roles WHERE user_id = ?',
+        ];
+        
+        for (const query of cleanupTables) {
+            try {
+                await pool.query(query, [userId]);
+            } catch (err) {
+                // Table might not exist, skip silently
+                console.warn(`Cleanup warning for user ${userId}:`, err.message);
+            }
+        }
+        
+        // Delete the user itself
         await pool.query('DELETE FROM users WHERE id = ?', [userId]);
         
         // Log activity
-        await logActivity(req.user.id, 'DELETE_USER', 'user', userId, `Deleted user: ${user[0]?.email}`);
+        await logActivity(req.user.id, 'DELETE_USER', 'user', userId, `Deleted user: ${userRows[0]?.email || 'unknown'}`);
         
         res.json({ message: "User deleted successfully" });
     } catch (error) {
@@ -421,6 +444,143 @@ const getSuperAdminStats = async (req, res) => {
     }
 };
 
+/**
+ * Get orphaned/previous users — entries in user_roles, scholar_profile, etc.
+ * where the user no longer exists in the users table.
+ */
+const getOrphanedUsers = async (req, res) => {
+    try {
+        // Find orphaned user_ids from user_roles
+        const [orphanedRoles] = await pool.query(`
+            SELECT 
+                ur.user_id,
+                GROUP_CONCAT(r.name) as roles
+            FROM user_roles ur
+            LEFT JOIN roles r ON ur.role_id = r.id
+            WHERE ur.user_id NOT IN (SELECT id FROM users)
+            GROUP BY ur.user_id
+        `);
+
+        // Find orphaned user_ids from scholar_profile
+        const [orphanedScholars] = await pool.query(`
+            SELECT 
+                sp.user_id,
+                sp.full_name,
+                sp.university,
+                sp.approved,
+                sp.application_status,
+                sp.created_at,
+                sp.stripe_account_id,
+                sp.stripe_onboarding_complete
+            FROM scholar_profile sp
+            WHERE sp.user_id NOT IN (SELECT id FROM users)
+        `);
+
+        // Find orphaned user_ids from scholar_subjects
+        const [orphanedSubjects] = await pool.query(`
+            SELECT 
+                ss.scholar_user_id as user_id,
+                ss.subject_id,
+                s.name as subject_name,
+                ss.expertise,
+                ss.approved
+            FROM scholar_subjects ss
+            LEFT JOIN subjects s ON ss.subject_id = s.id
+            WHERE ss.scholar_user_id NOT IN (SELECT id FROM users)
+        `);
+
+        // Find orphaned videos
+        const [orphanedVideos] = await pool.query(`
+            SELECT 
+                v.scholar_user_id as user_id,
+                COUNT(*) as video_count
+            FROM videos v
+            WHERE v.scholar_user_id NOT IN (SELECT id FROM users)
+            GROUP BY v.scholar_user_id
+        `);
+
+        // Merge all orphaned data by user_id
+        const orphanedMap = {};
+        
+        orphanedRoles.forEach(r => {
+            if (!orphanedMap[r.user_id]) orphanedMap[r.user_id] = { user_id: r.user_id };
+            orphanedMap[r.user_id].roles = r.roles;
+        });
+
+        orphanedScholars.forEach(sp => {
+            if (!orphanedMap[sp.user_id]) orphanedMap[sp.user_id] = { user_id: sp.user_id };
+            orphanedMap[sp.user_id].full_name = sp.full_name;
+            orphanedMap[sp.user_id].university = sp.university;
+            orphanedMap[sp.user_id].approved = sp.approved;
+            orphanedMap[sp.user_id].application_status = sp.application_status;
+            orphanedMap[sp.user_id].scholar_created_at = sp.created_at;
+            orphanedMap[sp.user_id].stripe_account_id = sp.stripe_account_id;
+            orphanedMap[sp.user_id].stripe_onboarding_complete = sp.stripe_onboarding_complete;
+        });
+
+        orphanedSubjects.forEach(ss => {
+            if (!orphanedMap[ss.user_id]) orphanedMap[ss.user_id] = { user_id: ss.user_id };
+            if (!orphanedMap[ss.user_id].subjects) orphanedMap[ss.user_id].subjects = [];
+            orphanedMap[ss.user_id].subjects.push({ subject_id: ss.subject_id, subject_name: ss.subject_name, expertise: ss.expertise, approved: ss.approved });
+        });
+
+        orphanedVideos.forEach(v => {
+            if (!orphanedMap[v.user_id]) orphanedMap[v.user_id] = { user_id: v.user_id };
+            orphanedMap[v.user_id].video_count = v.video_count;
+        });
+
+        const orphanedUsers = Object.values(orphanedMap);
+
+        res.json({ orphanedUsers });
+    } catch (error) {
+        console.error("Error fetching orphaned users:", error);
+        res.status(500).json({ message: "Server error", error: error.message });
+    }
+};
+
+/**
+ * Clean up orphaned data for a specific user_id
+ */
+const cleanupOrphanedUser = async (req, res) => {
+    try {
+        const { userId } = req.params;
+
+        // Make sure this user truly doesn't exist in users table
+        const [existing] = await pool.query('SELECT id FROM users WHERE id = ?', [userId]);
+        if (existing.length > 0) {
+            return res.status(400).json({ message: "User still exists in the system. Use the regular delete function instead." });
+        }
+
+        const cleanupTables = [
+            'DELETE FROM admin_activity_log WHERE user_id = ?',
+            'DELETE FROM admin_profiles WHERE user_id = ?',
+            'DELETE FROM subject_purchases WHERE buyer_user_id = ?',
+            'DELETE FROM videos WHERE scholar_user_id = ?',
+            'DELETE FROM scholar_subjects WHERE scholar_user_id = ?',
+            'DELETE FROM scholar_profile WHERE user_id = ?',
+            'DELETE FROM user_roles WHERE user_id = ?',
+        ];
+
+        let totalDeleted = 0;
+        for (const query of cleanupTables) {
+            try {
+                const [result] = await pool.query(query, [userId]);
+                totalDeleted += result.affectedRows || 0;
+            } catch (err) {
+                console.warn(`Cleanup warning for orphaned user ${userId}:`, err.message);
+            }
+        }
+
+        // Log activity
+        await logActivity(req.user.id, 'CLEANUP_ORPHANED', 'user', userId, `Cleaned up ${totalDeleted} orphaned records for user_id ${userId}`);
+
+        res.json({ message: `Cleaned up ${totalDeleted} orphaned records for user #${userId}` });
+    } catch (error) {
+        console.error("Error cleaning up orphaned user:", error);
+        res.status(500).json({ message: "Server error", error: error.message });
+    }
+};
+
 module.exports = {
     getAdminProfile,
     updateAdminProfile,
@@ -428,6 +588,8 @@ module.exports = {
     createAdmin,
     updateUserRole,
     deleteUser,
+    getOrphanedUsers,
+    cleanupOrphanedUser,
     getSecurityUpdates,
     createSecurityUpdate,
     updateSecurityStatus,

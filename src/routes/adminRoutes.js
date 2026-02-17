@@ -6,6 +6,8 @@ const {
     createAdmin,
     updateUserRole,
     deleteUser,
+    getOrphanedUsers,
+    cleanupOrphanedUser,
     getSecurityUpdates,
     createSecurityUpdate,
     updateSecurityStatus,
@@ -27,8 +29,10 @@ adminRoutes.put('/profile', authMiddleware, authorizeRoles("Admin", "SuperAdmin"
 
 // User management routes
 adminRoutes.get('/users', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), getAllUsers);
+adminRoutes.get('/users/orphaned', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), getOrphanedUsers);
 adminRoutes.post('/users/create-admin', authMiddleware, strictIPWhitelist, authorizeRoles("SuperAdmin"), createAdmin);
 adminRoutes.put('/users/:userId/role', authMiddleware, strictIPWhitelist, authorizeRoles("SuperAdmin"), updateUserRole);
+adminRoutes.delete('/users/orphaned/:userId', authMiddleware, strictIPWhitelist, authorizeRoles("SuperAdmin"), cleanupOrphanedUser);
 adminRoutes.delete('/users/:userId', authMiddleware, strictIPWhitelist, authorizeRoles("SuperAdmin"), deleteUser);
 
 // Security updates routes (Admin + SuperAdmin)
