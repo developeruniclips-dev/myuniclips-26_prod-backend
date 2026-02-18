@@ -465,8 +465,8 @@ const getOrphanedUsers = async (req, res) => {
         const [orphanedScholars] = await pool.query(`
             SELECT 
                 sp.user_id,
-                sp.full_name,
                 sp.university,
+                sp.degree,
                 sp.approved,
                 sp.application_status,
                 sp.created_at,
@@ -509,8 +509,8 @@ const getOrphanedUsers = async (req, res) => {
 
         orphanedScholars.forEach(sp => {
             if (!orphanedMap[sp.user_id]) orphanedMap[sp.user_id] = { user_id: sp.user_id };
-            orphanedMap[sp.user_id].full_name = sp.full_name;
             orphanedMap[sp.user_id].university = sp.university;
+            orphanedMap[sp.user_id].degree = sp.degree;
             orphanedMap[sp.user_id].approved = sp.approved;
             orphanedMap[sp.user_id].application_status = sp.application_status;
             orphanedMap[sp.user_id].scholar_created_at = sp.created_at;
