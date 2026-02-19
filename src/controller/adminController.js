@@ -451,53 +451,64 @@ const getSuperAdminStats = async (req, res) => {
 const getOrphanedUsers = async (req, res) => {
     try {
         // Find orphaned user_ids from user_roles
-        const [orphanedRoles] = await pool.query(`
-            SELECT 
-                ur.user_id,
-                GROUP_CONCAT(r.name) as roles
-            FROM user_roles ur
-            LEFT JOIN roles r ON ur.role_id = r.id
-            WHERE ur.user_id NOT IN (SELECT id FROM users)
-            GROUP BY ur.user_id
-        `);
+        let orphanedRoles = [];
+        try {
+            const [rows] = await pool.query(`
+                SELECT 
+                    ur.user_id,
+                    GROUP_CONCAT(r.name) as roles
+                FROM user_roles ur
+                LEFT JOIN roles r ON ur.role_id = r.id
+                WHERE ur.user_id NOT IN (SELECT id FROM users)
+                GROUP BY ur.user_id
+            `);
+            orphanedRoles = rows;
+        } catch (e) { console.warn('orphanedRoles query skipped:', e.message); }
 
         // Find orphaned user_ids from scholar_profile
-        const [orphanedScholars] = await pool.query(`
-            SELECT 
-                sp.user_id,
-                sp.university,
-                sp.degree,
-                sp.approved,
-                sp.application_status,
-                sp.created_at,
-                sp.stripe_account_id,
-                sp.stripe_onboarding_complete
-            FROM scholar_profile sp
-            WHERE sp.user_id NOT IN (SELECT id FROM users)
-        `);
+        let orphanedScholars = [];
+        try {
+            const [rows] = await pool.query(`
+                SELECT 
+                    sp.user_id,
+                    sp.university,
+                    sp.approved,
+                    sp.created_at
+                FROM scholar_profile sp
+                WHERE sp.user_id NOT IN (SELECT id FROM users)
+            `);
+            orphanedScholars = rows;
+        } catch (e) { console.warn('orphanedScholars query skipped:', e.message); }
 
         // Find orphaned user_ids from scholar_subjects
-        const [orphanedSubjects] = await pool.query(`
-            SELECT 
-                ss.scholar_user_id as user_id,
-                ss.subject_id,
-                s.name as subject_name,
-                ss.expertise,
-                ss.approved
-            FROM scholar_subjects ss
-            LEFT JOIN subjects s ON ss.subject_id = s.id
-            WHERE ss.scholar_user_id NOT IN (SELECT id FROM users)
-        `);
+        let orphanedSubjects = [];
+        try {
+            const [rows] = await pool.query(`
+                SELECT 
+                    ss.scholar_user_id as user_id,
+                    ss.subject_id,
+                    s.name as subject_name,
+                    ss.approved
+                FROM scholar_subjects ss
+                LEFT JOIN subjects s ON ss.subject_id = s.id
+                WHERE ss.scholar_user_id NOT IN (SELECT id FROM users)
+            `);
+            orphanedSubjects = rows;
+        } catch (e) { console.warn('orphanedSubjects query skipped:', e.message); }
 
         // Find orphaned videos
-        const [orphanedVideos] = await pool.query(`
-            SELECT 
-                v.scholar_user_id as user_id,
-                COUNT(*) as video_count
-            FROM videos v
-            WHERE v.scholar_user_id NOT IN (SELECT id FROM users)
-            GROUP BY v.scholar_user_id
-        `);
+        let orphanedVideos = [];
+        try {
+            const [rows] = await pool.query(`
+                SELECT 
+                    v.scholar_user_id as user_id,
+                    COUNT(*) as video_count
+                FROM videos v
+                WHERE v.scholar_user_id NOT IN (SELECT id FROM users)
+                GROUP BY v.scholar_user_id
+            `);
+            orphanedVideos = rows;
+        } catch (e) { console.warn('orphanedVideos query skipped:', e.message); }
 
         // Merge all orphaned data by user_id
         const orphanedMap = {};
@@ -510,18 +521,14 @@ const getOrphanedUsers = async (req, res) => {
         orphanedScholars.forEach(sp => {
             if (!orphanedMap[sp.user_id]) orphanedMap[sp.user_id] = { user_id: sp.user_id };
             orphanedMap[sp.user_id].university = sp.university;
-            orphanedMap[sp.user_id].degree = sp.degree;
             orphanedMap[sp.user_id].approved = sp.approved;
-            orphanedMap[sp.user_id].application_status = sp.application_status;
             orphanedMap[sp.user_id].scholar_created_at = sp.created_at;
-            orphanedMap[sp.user_id].stripe_account_id = sp.stripe_account_id;
-            orphanedMap[sp.user_id].stripe_onboarding_complete = sp.stripe_onboarding_complete;
         });
 
         orphanedSubjects.forEach(ss => {
             if (!orphanedMap[ss.user_id]) orphanedMap[ss.user_id] = { user_id: ss.user_id };
             if (!orphanedMap[ss.user_id].subjects) orphanedMap[ss.user_id].subjects = [];
-            orphanedMap[ss.user_id].subjects.push({ subject_id: ss.subject_id, subject_name: ss.subject_name, expertise: ss.expertise, approved: ss.approved });
+            orphanedMap[ss.user_id].subjects.push({ subject_id: ss.subject_id, subject_name: ss.subject_name, approved: ss.approved });
         });
 
         orphanedVideos.forEach(v => {
