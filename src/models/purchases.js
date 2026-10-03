@@ -14,7 +14,7 @@ const PurchaseModel = {
     pool.query("SELECT * FROM purchases WHERE buyer_user_id = ? AND video_id = ?", [buyerUserId, videoId]),
 
   findByUser: (buyerUserId) =>
-    pool.query("SELECT p.*, v.title, v.video_url FROM purchases p JOIN videos v ON p.video_id = v.id WHERE p.buyer_user_id = ?", [buyerUserId]),
+    pool.query("SELECT p.*, v.title, v.video_url, v.subject_id, v.scholar_user_id AS scholar_id FROM purchases p JOIN videos v ON p.video_id = v.id WHERE p.buyer_user_id = ?", [buyerUserId]),
 
   savePurchase: (user_id, video_id, amount, transaction_id) => {
     return pool.query(

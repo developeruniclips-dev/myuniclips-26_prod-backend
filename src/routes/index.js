@@ -29,6 +29,7 @@ routes.use("/library", libraryRoutes);
 routes.use("/password", passwordRoutes);
 routes.use("/locations", locationRoutes);
 routes.use("/admin", adminRoutes);
+routes.use("/operations", require("./operationsRoutes"));
 routes.use("/2fa", twoFactorRoutes);
 
 module.exports = routes;

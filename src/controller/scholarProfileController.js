@@ -151,7 +151,7 @@ const getScholarProfileStatus = async (req, res) => {
 
     res.json({
       isScholar: true,
-      profile: profile[0],
+      profile: await require('../utils/academicContext').scholarContext(pool, user_id),
       approved: profile[0].approved === 1
     });
 

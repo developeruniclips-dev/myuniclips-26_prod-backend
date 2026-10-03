@@ -1,13 +1,12 @@
 const { Router } = require("express");
+const ops = require('../controller/operationsController');
 const {
     getAllCountries,
     getUniversitiesByCountry,
     getAllUniversities,
     getProgramsByUniversity,
     getAllDegreePrograms,
-    getSubjectsByUniversityAndProgram,
-    addCountry,
-    addUniversity
+    getSubjectsByUniversityAndProgram
 } = require("../controller/locationController");
 const { authMiddleware } = require("../middleware/auth");
 const { authorizeRoles } = require("../middleware/roles");
@@ -23,7 +22,7 @@ locationRoutes.get('/programs/all', getAllDegreePrograms);
 locationRoutes.get('/subjects/by-university/:universityId/program/:program', getSubjectsByUniversityAndProgram);
 
 // Admin routes - for managing locations
-locationRoutes.post('/countries', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), addCountry);
-locationRoutes.post('/universities', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), addUniversity);
+locationRoutes.post('/countries', authMiddleware, authorizeRoles("SuperAdmin"), ops.unavailable);
+locationRoutes.post('/universities', authMiddleware, authorizeRoles("SuperAdmin"), ops.unavailable);
 
 module.exports = locationRoutes;

@@ -6,7 +6,7 @@ const { pool } = require('../config/db');
 const getAllCountries = async (req, res) => {
     try {
         const [rows] = await pool.query(
-            'SELECT id, name, code FROM countries ORDER BY name'
+            `SELECT c.id, c.name, c.code FROM countries c ${req.query.available === '1' ? 'WHERE EXISTS (SELECT 1 FROM universities u JOIN subjects s ON s.university_id = u.id WHERE u.country_id = c.id)' : ''} ORDER BY c.name`
         );
         res.json(rows);
     } catch (error) {
@@ -27,7 +27,7 @@ const getUniversitiesByCountry = async (req, res) => {
         }
         
         const [rows] = await pool.query(
-            'SELECT id, name, short_name FROM universities WHERE country_id = ? ORDER BY name',
+            `SELECT u.id, u.name, u.short_name FROM universities u WHERE u.country_id = ? ${req.query.available === '1' ? 'AND EXISTS (SELECT 1 FROM subjects s WHERE s.university_id = u.id)' : ''} ORDER BY u.name`,
             [countryId]
         );
         res.json(rows);
@@ -46,6 +46,7 @@ const getAllUniversities = async (req, res) => {
             SELECT u.id, u.name, u.short_name, u.country_id, c.name as country_name, c.code as country_code
             FROM universities u
             JOIN countries c ON u.country_id = c.id
+            ${req.query.available === '1' ? 'WHERE EXISTS (SELECT 1 FROM subjects s WHERE s.university_id = u.id)' : ''}
             ORDER BY c.name, u.name
         `);
         res.json(rows);
@@ -110,11 +111,9 @@ const getSubjectsByUniversityAndProgram = async (req, res) => {
     try {
         const { universityId, program } = req.params;
         
-        // For now, just filter by program
-        // Later we can also filter by university_id when subjects are linked
         const [rows] = await pool.query(
-            'SELECT id, name, degree_programmes FROM subjects WHERE degree_programmes = ? ORDER BY name',
-            [decodeURIComponent(program)]
+            'SELECT id, name, degree_programmes FROM subjects WHERE university_id = ? AND degree_programmes = ? ORDER BY name',
+            [universityId, program]
         );
         res.json(rows);
     } catch (error) {

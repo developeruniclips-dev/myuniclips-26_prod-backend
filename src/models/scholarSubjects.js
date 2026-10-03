@@ -33,6 +33,7 @@ const ScholarSubjectModel = {
     getScholarSubjectsStatus: (scholar_user_id) => {
         return pool.query(
             `SELECT 
+                ss.id,
                 ss.subject_id, 
                 ss.subject_name, 
                 ss.degree, 

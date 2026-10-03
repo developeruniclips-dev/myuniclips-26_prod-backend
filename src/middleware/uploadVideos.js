@@ -23,7 +23,7 @@ const storage = multer.diskStorage({
 
 const uploadVideo = multer({
   storage: storage,
-  limits: { fileSize: 1024 * 1024 * 1024 }, // 1GB max
+  limits: { fileSize: require("../config/courseLimits").maxVideoBytes }, // 1GB max
   fileFilter: createSecureFileFilter('video')
 });
 

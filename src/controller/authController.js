@@ -248,7 +248,21 @@ const login = async (req, res) => {
 const becomeScholar = async (req, res) => {
     try {
         const userId = req.user.id; // From auth middleware
-        const { university, degree, year } = req.body;
+        const { degree, year, universityId, countryId } = req.body;
+        if (!Number.isInteger(Number(year)) || Number(year) < 2024 || Number(year) > 2035) return res.status(400).json({message:'Choose a graduation year between 2024 and 2035.'});
+        const db = require('../config/db').pool;
+        const { resolveUniversity, universityLabel } = require('../utils/academicContext');
+        let selected;
+        if (universityId) {
+            const [[row]] = await db.query('SELECT * FROM universities WHERE id = ? AND country_id = ?', [universityId, countryId]);
+            selected = row;
+        } else {
+            selected = await resolveUniversity(db, req.body.university || '');
+        }
+        if (!selected) return res.status(400).json({ message: 'Choose a valid university and country' });
+        const [[programme]] = await db.query('SELECT id FROM subjects WHERE university_id = ? AND degree_programmes = ? LIMIT 1', [selected.id, degree || '']);
+        if (!programme) return res.status(400).json({ message: 'Choose a programme at your selected university' });
+        const university = universityLabel(selected);
 
         if (!university || !degree || !year) {
             return res.status(400).json({ message: "All fields are required" });

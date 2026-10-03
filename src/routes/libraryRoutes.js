@@ -9,7 +9,8 @@ const {
   markVideoWatched,
   getCourseProgress,
   saveVideoProgress,
-  getVideoProgress
+  getVideoProgress,
+  getLearningProgress
 } = require('../controller/libraryController');
 
 // All routes require authentication
@@ -24,6 +25,7 @@ router.get('/check', isInLibrary);
 // Progress tracking
 router.post('/mark-watched', markVideoWatched);
 router.get('/progress', getCourseProgress);
+router.get('/learning-progress', getLearningProgress);
 router.post('/save-progress', saveVideoProgress);
 router.get('/video-progress', getVideoProgress);
 

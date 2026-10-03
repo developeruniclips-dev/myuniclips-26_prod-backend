@@ -1,4 +1,3 @@
-const express = require("express");
 const { Router } = require("express");
 const { 
   createPaymentIntent, 
@@ -8,13 +7,13 @@ const {
   // Stripe Checkout Session (Marketplace)
   createCheckoutSession,
   handleCheckoutSuccess,
+  getOrderStatus,
   // Subject bundle functions
   createSubjectPaymentIntent,
   confirmSubjectPurchase,
   checkSubjectPurchase,
   getMySubjectPurchases
 } = require("../controller/purchaseController");
-const { stripeWebhook } = require("../controller/stripeWebhookController");
 const { authMiddleware } = require("../middleware/auth");
 const { authorizeRoles } = require("../middleware/roles");
 
@@ -28,6 +27,8 @@ purchaseRoutes.get('/my-purchases', authMiddleware, authorizeRoles("Learner","Sc
 purchaseRoutes.post('/create-checkout-session', authMiddleware, authorizeRoles("Learner","Scholar"), createCheckoutSession);
 purchaseRoutes.post('/checkout-success', authMiddleware, authorizeRoles("Learner","Scholar"), handleCheckoutSuccess);
 
+purchaseRoutes.get('/orders/:orderId', authMiddleware, getOrderStatus);
+
 // Subject bundle purchases with embedded card form
 purchaseRoutes.post('/subject/create-payment-intent', authMiddleware, authorizeRoles("Learner","Scholar"), createSubjectPaymentIntent);
 purchaseRoutes.post('/subject/confirm', authMiddleware, authorizeRoles("Learner","Scholar"), confirmSubjectPurchase);
@@ -40,7 +41,6 @@ purchaseRoutes.get('/transactions/all', authMiddleware, authorizeRoles("Admin", 
 // Legacy Stripe PaymentIntent (for individual videos)
 purchaseRoutes.post("/create-payment-intent", authMiddleware, createPaymentIntent);
 
-// Webhook
-purchaseRoutes.post("/webhook", express.raw({ type: "application/json" }), stripeWebhook);
+// Both webhook aliases are mounted before JSON parsing in index.js.
 
 module.exports = purchaseRoutes;

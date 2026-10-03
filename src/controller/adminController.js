@@ -405,7 +405,7 @@ const getSuperAdminStats = async (req, res) => {
         const [videoStats] = await pool.query('SELECT COUNT(*) as total, SUM(CASE WHEN approved = 1 THEN 1 ELSE 0 END) as approved FROM videos');
         
         // Total revenue (from subject_purchases - the actual purchase table)
-        const [revenueStats] = await pool.query('SELECT COALESCE(SUM(amount), 0) as total_revenue FROM subject_purchases');
+        const [revenueStats] = await pool.query('SELECT UPPER(currency) AS currency, COALESCE(SUM(amount), 0) as total_revenue FROM subject_purchases GROUP BY UPPER(currency)');
         
         // Pending security updates
         let securityCount = 0;
@@ -433,7 +433,8 @@ const getSuperAdminStats = async (req, res) => {
             totalUsers: totalUsers[0]?.total || 0,
             users: userStats,
             videos: videoStats[0],
-            revenue: revenueStats[0],
+            revenue: revenueStats.find(r => r.currency === 'EUR') || { currency: 'EUR', total_revenue: 0 },
+            revenueByCurrency: revenueStats,
             security: { pending: securityCount },
             pendingScholars: pendingScholars[0]?.pending || 0,
             activity: { recent: activityCount }

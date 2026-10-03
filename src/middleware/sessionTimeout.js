@@ -23,7 +23,9 @@ const sessionTimeoutMiddleware = async (req, res, next) => {
         try {
             // Get user's last activity
             const [users] = await pool.query(
-                'SELECT last_activity FROM users WHERE id = ?',
+                `SELECT last_activity,
+                        TIMESTAMPDIFF(SECOND, last_activity, NOW()) AS idle_seconds
+                 FROM users WHERE id = ?`,
                 [req.user.id]
             );
 
@@ -35,11 +37,12 @@ const sessionTimeoutMiddleware = async (req, res, next) => {
 
             // Check if session has expired
             if (lastActivity) {
-                const lastActivityTime = new Date(lastActivity);
-                const now = new Date();
-                const minutesSinceLastActivity = (now - lastActivityTime) / (1000 * 60);
+                // last_activity is written with MySQL NOW(). Compare on that same
+                // clock: mysql2 otherwise decodes UTC DATETIME values in Node's
+                // local timezone, making a fresh local login appear hours old.
+                const idleSeconds = Number(users[0].idle_seconds);
 
-                if (minutesSinceLastActivity > SESSION_TIMEOUT_MINUTES) {
+                if (idleSeconds > SESSION_TIMEOUT_MINUTES * 60) {
                     // Session expired - clear refresh token
                     try {
                         await UserModel.clearRefreshToken(req.user.id);

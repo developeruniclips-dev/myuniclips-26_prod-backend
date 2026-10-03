@@ -1,8 +1,7 @@
+const ops = require('../controller/operationsController');
 const { Router } = require("express");
 const { 
   getAllScholarApplications, 
-  approveScholarApplication, 
-  rejectScholarApplication,
   getScholarProfileStatus
 } = require("../controller/scholarProfileController");
 const { authMiddleware } = require("../middleware/auth");
@@ -30,14 +29,14 @@ scholarProfileRoutes.post(
   "/approve",
   authMiddleware,
   authorizeRoles("Admin"),
-  approveScholarApplication
+  ops.legacyReview('scholars','approve','user')
 );
 
 scholarProfileRoutes.post(
   "/reject",
   authMiddleware,
   authorizeRoles("Admin"),
-  rejectScholarApplication
+  ops.legacyReview('scholars','reject','user')
 );
 
 module.exports = scholarProfileRoutes;

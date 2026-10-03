@@ -3,7 +3,15 @@ const { ScholarSubjectModel } = require("../models/scholarSubjects");
 const requestSubject = async(req, res) => {
     try {
             const scholar_id = req.user.id;
-            const { subject_id, degree, expertise } = req.body;
+            const { subject_id, expertise } = req.body;
+            const { pool } = require('../config/db');
+            const { scholarContext, availableSubjects } = require('../utils/academicContext');
+            const profile = await scholarContext(pool, scholar_id);
+            if (!profile?.approved) return res.status(403).json({ message: 'Scholar approval is required' });
+            const available = await availableSubjects(pool, profile);
+            const subject = available.find(row => Number(row.id) === Number(subject_id));
+            if (!subject) return res.status(403).json({ message: 'Choose a course from your approved university and programme' });
+            const degree = profile.degree;
 
             const [exist] = await ScholarSubjectModel.checkExistingRequest(scholar_id, subject_id);
 
@@ -12,7 +20,6 @@ const requestSubject = async(req, res) => {
             }
 
             // Get subject name from subjects table
-            const { pool } = require("../config/db");
             const [subjects] = await pool.query("SELECT name FROM subjects WHERE id = ?", [subject_id]);
             const subject_name = subjects[0]?.name || '';
 
@@ -85,22 +92,19 @@ const deleteSubjectByScholar = async(req, res) => {
             return res.status(404).json({ message: "Course not found or not yours to delete" });
         }
 
-        // Delete associated videos first
-        const [subject] = await pool.query("SELECT subject_id FROM scholar_subjects WHERE id = ?", [id]);
-        if (subject.length > 0) {
-            await pool.query(
-                "DELETE FROM videos WHERE subject_id = ? AND scholar_user_id = ?", 
-                [subject[0].subject_id, scholarId]
-            );
-        }
+        const [[subject]] = await pool.query('SELECT subject_id FROM scholar_subjects WHERE id = ?', [id]);
+        const { withCourseLock, fail } = require('../utils/courseContent');
+        await withCourseLock(pool, scholarId, subject.subject_id, async db => {
+            const [[content]] = await db.query('SELECT COUNT(*) AS count FROM videos WHERE subject_id = ? AND scholar_user_id = ?', [subject.subject_id, scholarId]);
+            const [[sales]] = await db.query('SELECT COUNT(*) AS count FROM subject_purchases WHERE subject_id = ? AND scholar_id = ?', [subject.subject_id, scholarId]);
+            if (Number(content.count) || Number(sales.count)) fail(409, 'Courses with content or historical sales cannot be deleted here. Manage unapproved lessons individually.');
+            await db.query('DELETE FROM scholar_subjects WHERE id = ? AND scholar_user_id = ?', [id, scholarId]);
+        });
 
-        // Delete the subject
-        await pool.query("DELETE FROM scholar_subjects WHERE id = ?", [id]);
-
-        res.json({ message: "Course and associated videos deleted successfully" });
+        res.json({ message: "Empty course application removed" });
     } catch (error) {
         console.error("Error deleting course:", error);
-        res.status(500).json({ message: "Server error deleting course", error });
+        res.status(error.status || 500).json({ message: error.status ? error.message : "Server error deleting course" });
     }
 };
 

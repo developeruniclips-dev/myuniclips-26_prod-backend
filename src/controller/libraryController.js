@@ -1,4 +1,5 @@
 const { pool } = require('../config/db');
+const { annotateCourses } = require('../utils/generalCourses');
 
 // Add course to library
 const addToLibrary = async (req, res) => {
@@ -113,7 +114,7 @@ const getMyLibrary = async (req, res) => {
       };
     }));
 
-    res.status(200).json({ library: libraryWithProgress });
+    res.status(200).json({ library: await annotateCourses(pool, libraryWithProgress) });
   } catch (error) {
     console.error('Error getting library:', error);
     res.status(500).json({ message: 'Failed to get library' });
@@ -249,7 +250,24 @@ const getVideoProgress = async (req, res) => {
   }
 };
 
+// Dashboard summary reads existing playback records; it never writes progress.
+const getLearningProgress = async (req, res) => {
+  try {
+    const [progress] = await pool.query(`
+      SELECT vp.video_id, vp.watched, vp.progress_seconds, vp.watched_at,
+             v.subject_id, v.scholar_user_id AS scholar_id, v.title
+      FROM video_progress vp
+      JOIN videos v ON v.id = vp.video_id
+      WHERE vp.user_id = ? AND v.approved = 1
+    `, [req.user.id]);
+    res.json({ progress });
+  } catch (error) {
+    res.status(500).json({ message: 'Unable to load learning progress' });
+  }
+};
+
 module.exports = {
+  getLearningProgress,
   addToLibrary,
   removeFromLibrary,
   getMyLibrary,

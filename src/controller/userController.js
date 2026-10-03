@@ -1,5 +1,6 @@
 const { UserModel } = require('../models/User');
 const { pool } = require('../config/db');
+const { learnerPreferences } = require('../utils/learnerPreferences');
 
 //get all users
 const getAllUsers = async(req, res) => {
@@ -93,8 +94,6 @@ const deleteUser = async(req, res) => {
 // Get user profile with roles
 const getUserProfile = async (req, res) => {
     try {
-        console.log('getUserProfile called');
-        console.log('req.user:', req.user);
         
         if (!req.user || !req.user.id) {
             console.error('No user ID in request');
@@ -102,7 +101,6 @@ const getUserProfile = async (req, res) => {
         }
         
         const userId = req.user.id;
-        console.log('Fetching profile for userId:', userId);
         
         const [userRows] = await UserModel.findById(userId);
         if (userRows.length === 0) {
@@ -111,7 +109,6 @@ const getUserProfile = async (req, res) => {
         }
         
         const user = userRows[0];
-        console.log('User found:', user.email);
         
         // Get user roles
         const [roleRows] = await pool.query(`
@@ -122,7 +119,6 @@ const getUserProfile = async (req, res) => {
         `, [userId]);
         
         const roles = roleRows.map(row => row.role_name);
-        console.log('User roles:', roles);
         
         // Remove sensitive data
         delete user.password;
@@ -159,7 +155,7 @@ const updateUserProfile = async (req, res) => {
             profileImageUrl = req.file.path.replace(/\\/g, '/');
         }
         
-        const updateFields = {};
+        const updateFields = await learnerPreferences(req.body, pool);
         if (fname) updateFields.fname = fname;
         if (lname) updateFields.lname = lname;
         if (email) updateFields.email = email;
@@ -182,9 +178,12 @@ const updateUserProfile = async (req, res) => {
         
         await pool.query(query, [...values, userId]);
         
-        console.log('Profile updated successfully for user:', userId);
         res.json({ message: "Profile updated successfully", updatedFields: fields });
     } catch (error) {
+        if (error.statusCode === 400) return res.status(400).json({ message: error.message });
+        if (error.code === 'ER_BAD_FIELD_ERROR') {
+            return res.status(503).json({ message: "Profile preferences are not available yet. Please try again after the profile update is enabled." });
+        }
         console.error("Error updating user profile:", error);
         console.error("Full error:", error);
         res.status(500).json({ message: "Server error updating profile", error: error.message });

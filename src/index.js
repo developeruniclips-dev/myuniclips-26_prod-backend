@@ -4,6 +4,7 @@ const cors = require("cors");
 const path = require("path");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
+const { createApiRateLimiter } = require('./middleware/apiRateLimiter');
 const morgan = require("morgan");
 const fs = require("fs");
 
@@ -60,13 +61,7 @@ app.use(helmet({
 
 // ===== SECURITY: Rate Limiting =====
 // General API rate limit
-const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // 100 requests per 15 minutes
-  message: { error: "Too many requests, please try again later" },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+const generalLimiter = createApiRateLimiter();
 
 // Strict rate limit for auth endpoints (login, register, password reset)
 const authLimiter = rateLimit({
@@ -82,12 +77,15 @@ app.set('authLimiter', authLimiter);
 
 // Stripe webhook needs raw body
 app.post(
-  "/webhook",
+  ["/webhook", "/api/purchases/webhook"],
   express.raw({ type: "application/json" }),
   stripeWebhook
 );
 
 // Normal middleware (after webhook)
+// Escaped Unicode metadata can exceed the default JSON limit without exceeding
+// the character limits. Increase capacity only for lesson metadata editing.
+app.use('/api/videos/my/:id', express.json({ limit: '256kb' }));
 app.use(express.json());
 
 // CORS configuration
@@ -145,19 +143,12 @@ app.use((req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
   console.log(`📁 Uploads stored locally in: ${path.join(__dirname, "../uploads")}`);
   console.log(`🔒 Security: Helmet.js enabled, Rate limiting active`);
 
-  // Auto-migrate: ensure TEXT columns where needed
-  try {
-    const { pool } = require('./config/db');
-    await pool.query("ALTER TABLE scholar_subjects MODIFY COLUMN expertise TEXT");
-    console.log('✅ Migration: expertise column set to TEXT');
-  } catch (e) {
-    // Ignore if already done or table doesn't exist
-  }
+  // Schema changes belong to separately authorized, explicit migration scripts.
 });
 
 module.exports = { app, authLimiter };

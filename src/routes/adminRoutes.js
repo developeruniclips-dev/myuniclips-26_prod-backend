@@ -1,16 +1,10 @@
+const ops = require('../controller/operationsController');
 const { Router } = require("express");
 const {
     getAdminProfile,
-    updateAdminProfile,
     getAllUsers,
-    createAdmin,
-    updateUserRole,
-    deleteUser,
     getOrphanedUsers,
-    cleanupOrphanedUser,
     getSecurityUpdates,
-    createSecurityUpdate,
-    updateSecurityStatus,
     getActivityLog,
     getSuperAdminStats
 } = require("../controller/adminController");
@@ -25,20 +19,20 @@ adminRoutes.use(adminIPWhitelist);
 
 // Profile routes (Admin + SuperAdmin)
 adminRoutes.get('/profile', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), getAdminProfile);
-adminRoutes.put('/profile', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), updateAdminProfile);
+adminRoutes.put('/profile', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), ops.profileUpdate);
 
 // User management routes
 adminRoutes.get('/users', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), getAllUsers);
-adminRoutes.get('/users/orphaned', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), getOrphanedUsers);
-adminRoutes.post('/users/create-admin', authMiddleware, strictIPWhitelist, authorizeRoles("SuperAdmin"), createAdmin);
-adminRoutes.put('/users/:userId/role', authMiddleware, strictIPWhitelist, authorizeRoles("SuperAdmin"), updateUserRole);
-adminRoutes.delete('/users/orphaned/:userId', authMiddleware, strictIPWhitelist, authorizeRoles("SuperAdmin"), cleanupOrphanedUser);
-adminRoutes.delete('/users/:userId', authMiddleware, strictIPWhitelist, authorizeRoles("SuperAdmin"), deleteUser);
+adminRoutes.get('/users/orphaned', authMiddleware, authorizeRoles("SuperAdmin"), getOrphanedUsers);
+adminRoutes.post('/users/create-admin', authMiddleware, strictIPWhitelist, authorizeRoles("SuperAdmin"), ops.createAdmin);
+adminRoutes.put('/users/:userId/role', authMiddleware, strictIPWhitelist, authorizeRoles("SuperAdmin"), ops.changeRole);
+adminRoutes.delete('/users/orphaned/:userId', authMiddleware, strictIPWhitelist, authorizeRoles("SuperAdmin"), ops.unavailable);
+adminRoutes.delete('/users/:userId', authMiddleware, strictIPWhitelist, authorizeRoles("SuperAdmin"), ops.deleteUser);
 
 // Security updates routes (Admin + SuperAdmin)
-adminRoutes.get('/security-updates', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), getSecurityUpdates);
-adminRoutes.post('/security-updates', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), createSecurityUpdate);
-adminRoutes.put('/security-updates/:id/status', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), updateSecurityStatus);
+adminRoutes.get('/security-updates', authMiddleware, authorizeRoles("SuperAdmin"), getSecurityUpdates);
+adminRoutes.post('/security-updates', authMiddleware, authorizeRoles("SuperAdmin"), ops.securityUpdate);
+adminRoutes.put('/security-updates/:id/status', authMiddleware, authorizeRoles("SuperAdmin"), ops.securityUpdate);
 
 // Activity log (SuperAdmin only)
 adminRoutes.get('/activity-log', authMiddleware, authorizeRoles("SuperAdmin"), getActivityLog);

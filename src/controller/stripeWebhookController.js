@@ -1,29 +1,17 @@
-const stripe = require("../config/stripe");
-const { confirmPurchase } = require("./purchaseController");
-
+const stripe = require('../config/stripe');
+const { paymentRuntime } = require('../services/paymentRelease');
 const stripeWebhook = async (req, res) => {
-  const sig = req.headers["stripe-signature"];
-  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-
-  let event;
-
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
-  } catch (err) {
-    console.error("Webhook signature failed:", err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
-
-  if (event.type === "payment_intent.succeeded") {
-    const paymentIntent = event.data.object;
-    const videoId = paymentIntent.metadata.videoId;
-    const buyerId = paymentIntent.metadata.buyerId;
-    const transactionId = paymentIntent.id;
-
-    await confirmPurchase(Number(videoId), Number(buyerId), transactionId);
-  }
-
-  res.json({ received: true });
+    let event;
+    try { event = stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], process.env.STRIPE_WEBHOOK_SECRET); }
+    catch { return res.status(400).json({ message: 'Invalid webhook signature' }); }
+    try {
+        const result = await paymentRuntime().handleEvent(event);
+        if (result?.legacyReviewRequired) console.warn('Legacy Stripe event requires separate review', { eventId: event.id });
+        return res.json({ received: true });
+    }
+    catch (error) {
+        console.warn('Stripe event processing failed', { eventId: event.id, code: error.code || 'verification_error' });
+        return res.status(500).json({ message: 'Event processing incomplete; retry required' });
+    }
 };
-
 module.exports = { stripeWebhook };

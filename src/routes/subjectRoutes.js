@@ -1,11 +1,10 @@
+const ops = require('../controller/operationsController');
 const { Router } = require("express");
 const { 
-    createSubject, 
     getAllSubjects, 
     getOneSubject, 
     getAllPrograms, 
     getSubjectsByProgram,
-    updateBundlePrice,
     getSubjectBundlePrice
 } = require("../controller/subjectController");
 const { authMiddleware } = require("../middleware/auth");
@@ -17,11 +16,11 @@ subjectRoutes.get('/', getAllSubjects);
 subjectRoutes.get('/programs/all', getAllPrograms);
 subjectRoutes.get('/by-program/:program', getSubjectsByProgram);
 subjectRoutes.get('/:id', getOneSubject);
-subjectRoutes.post('/', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), createSubject); // Protected: Only admins can create subjects
+subjectRoutes.post('/', authMiddleware, authorizeRoles("SuperAdmin"), ops.unavailable); // Protected: Only admins can create subjects
 
 // Bundle price management
 subjectRoutes.get('/:id/bundle-price', getSubjectBundlePrice);
-subjectRoutes.put('/:id/bundle-price', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), updateBundlePrice);
-subjectRoutes.put('/:id/price', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), updateBundlePrice);
+subjectRoutes.put('/:id/bundle-price', authMiddleware, authorizeRoles("SuperAdmin"), ops.price);
+subjectRoutes.put('/:id/price', authMiddleware, authorizeRoles("SuperAdmin"), ops.price);
 
 module.exports = subjectRoutes;

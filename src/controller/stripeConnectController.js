@@ -1,5 +1,6 @@
 const stripe = require('../config/stripe');
 const { pool } = require('../config/db');
+const { classifyAccountError } = require('../services/payments/stripeProvider');
 
 // Helper to check if Stripe and required env vars are configured
 const checkStripeConfiguration = () => {
@@ -67,15 +68,14 @@ const createConnectAccount = async (req, res) => {
                     accountId: scholar.stripe_account_id 
                 });
             } catch (stripeError) {
-                // Account doesn't exist on this platform (likely created with different keys)
-                // Clear the old account ID and create a new one
-                console.warn(`Stripe account ${scholar.stripe_account_id} not found on platform, creating new account`);
-                await pool.query(
-                    'UPDATE scholar_profile SET stripe_account_id = NULL, stripe_onboarding_complete = 0, stripe_details_submitted = 0 WHERE user_id = ?',
-                    [scholarUserId]
-                );
-                // Continue to create new account below
+                return res.status(503).json({ message: 'Unable to verify your existing Stripe account. Its linkage has been preserved.',
+                    code: classifyAccountError(stripeError) });
             }
+        }
+
+        const academic = await require('../utils/academicContext').scholarContext(pool, scholarUserId);
+        if (academic?.country_code !== 'FI') {
+            return res.status(409).json({ message: 'Payout onboarding for your country is not enabled yet. Please contact UniClips.' });
         }
 
         // Get user details
@@ -193,21 +193,8 @@ const getAccountStatus = async (req, res) => {
         try {
             account = await stripe.accounts.retrieve(scholar.stripe_account_id);
         } catch (stripeError) {
-            // Account doesn't exist on this platform - clear it and return not connected
-            console.warn(`Stripe account ${scholar.stripe_account_id} not found, clearing from database`);
-            await pool.query(
-                'UPDATE scholar_profile SET stripe_account_id = NULL, stripe_onboarding_complete = 0, stripe_details_submitted = 0 WHERE user_id = ?',
-                [scholarUserId]
-            );
-            return res.json({ 
-                connected: false,
-                onboardingComplete: false,
-                detailsSubmitted: false,
-                chargesEnabled: false,
-                payoutsEnabled: false,
-                accountCleared: true,
-                message: 'Previous Stripe account was invalid and has been cleared. Please reconnect.'
-            });
+            return res.status(503).json({ connected: true, statusUnavailable: true,
+                code: classifyAccountError(stripeError), message: 'Stripe account status is unavailable. Your linked account has been preserved.' });
         }
 
         // Update database with current status (try/catch for missing columns)
@@ -320,85 +307,34 @@ const getPlatformBalance = async (req, res) => {
  */
 const createPayout = async (req, res) => {
     try {
-        const { scholarUserId, amount, currency = 'eur', description } = req.body;
-
-        // Check platform's available balance first
-        const balance = await stripe.balance.retrieve();
-        const availableBalance = balance.available.find(b => b.currency === currency);
-        const availableAmount = availableBalance ? availableBalance.amount / 100 : 0;
-        
-        if (availableAmount < amount) {
-            return res.status(400).json({ 
-                message: `Insufficient available funds. Available: €${availableAmount.toFixed(2)}, Requested: €${amount.toFixed(2)}. Funds typically become available 2-7 days after payment.`,
-                availableBalance: availableAmount,
-                pendingInfo: 'Stripe holds funds for new accounts. Check your Stripe Dashboard for pending balance.'
-            });
+        const { paymentMode } = require('../services/paymentRelease/mode');
+        if (paymentMode() !== 'phase2a') return res.status(409).json({ message: 'Manual transfer execution is unavailable in the current payment release. Recorded earnings and transfer history remain available.' });
+        const { transferOrder } = require('../services/payments');
+        let orderIds;
+        if (req.body.orderId) orderIds = [req.body.orderId];
+        else {
+            // Compatibility with the existing Admin release control: the supplied
+            // amount is only a consistency check, never an instruction to Stripe.
+            const { toMinor } = require('../services/payments/money');
+            const currency = String(req.body.currency || 'EUR').toUpperCase();
+            if (currency !== 'EUR' || !req.body.scholarUserId) return res.status(409).json({ message: 'No supported authoritative allocation selected.' });
+            const [rows] = await pool.query(`SELECT t.order_id,t.amount_minor FROM payment_transfers t
+                JOIN payment_orders o ON o.id=t.order_id WHERE o.scholar_id=? AND t.currency=?
+                AND t.state IN ('pending','uncertain','failed') AND o.refund_state='none' AND o.dispute_state='none'`,
+                [req.body.scholarUserId,currency]);
+            const expected = rows.reduce((sum,row) => sum + Number(row.amount_minor),0);
+            let requested;
+            try { requested = toMinor(req.body.amount,currency); } catch { return res.status(400).json({ message: 'Invalid transfer amount.' }); }
+            if (!rows.length || expected !== requested) return res.status(409).json({ message: 'Release must match recorded new allocations. Legacy earnings require reconciliation before release.' });
+            orderIds = rows.map(row=>row.order_id);
         }
-
-        // Get scholar's Stripe account (handle missing columns gracefully)
-        let scholarProfile;
-        try {
-            [scholarProfile] = await pool.query(
-                'SELECT stripe_account_id, stripe_onboarding_complete FROM scholar_profile WHERE user_id = ?',
-                [scholarUserId]
-            );
-        } catch (dbError) {
-            console.warn('Extended stripe columns not found, using basic query:', dbError.message);
-            [scholarProfile] = await pool.query(
-                'SELECT stripe_account_id FROM scholar_profile WHERE user_id = ?',
-                [scholarUserId]
-            );
-        }
-
-        if (scholarProfile.length === 0) {
-            return res.status(404).json({ message: 'Scholar not found' });
-        }
-
-        if (!scholarProfile[0].stripe_account_id) {
-            return res.status(400).json({ 
-                message: 'Scholar has not completed Stripe onboarding' 
-            });
-        }
-
-        // Create transfer to connected account
-        const transfer = await stripe.transfers.create({
-            amount: Math.round(amount * 100), // Convert to cents
-            currency: currency,
-            destination: scholarProfile[0].stripe_account_id,
-            description: description || 'Payout from UniClips',
-        });
-
-        // Log the payout in database (optional - you can create a payouts table)
-        await pool.query(
-            'INSERT INTO scholar_payouts (scholar_user_id, stripe_transfer_id, amount, currency, status, created_at) VALUES (?, ?, ?, ?, ?, NOW())',
-            [scholarUserId, transfer.id, amount, currency, 'completed']
-        );
-
-        res.json({ 
-            success: true,
-            transfer: {
-                id: transfer.id,
-                amount: transfer.amount / 100,
-                currency: transfer.currency,
-                destination: transfer.destination
-            }
-        });
-
+        const results = [];
+        for (const id of orderIds) results.push({ orderId:id,...await transferOrder(id) });
+        const completed = results.every(result=>result.state==='completed');
+        res.status(completed ? 200 : 409).json({ success:completed,results,
+            message:completed ? 'Recorded allocations transferred to Stripe. Bank payout is managed separately.' : 'Some allocations remain pending or require reconciliation. Refresh before retrying.' });
     } catch (error) {
-        console.error('Error creating payout:', error);
-        
-        // Better error messages for common Stripe errors
-        if (error.message?.includes('Insufficient funds')) {
-            return res.status(400).json({ 
-                message: 'Insufficient funds in platform account. Funds become available 2-7 days after customer payment.',
-                error: error.message
-            });
-        }
-        
-        res.status(500).json({ 
-            message: 'Error creating payout', 
-            error: error.message 
-        });
+        res.status(error.status || 503).json({ message: error.status ? error.message : 'Transfer requires reconciliation. No blind retry was made.' });
     }
 };
 
@@ -462,21 +398,11 @@ const getAllScholarsStripeStatus = async (req, res) => {
         // Enrich with live Stripe data only if Stripe is configured
         const scholarsWithStripeStatus = await Promise.all(
             scholars.map(async (scholar) => {
-                // Calculate pending balance for this scholar
-                const [salesData] = await pool.query(`
-                    SELECT COALESCE(SUM(amount), 0) as total_revenue
-                    FROM subject_purchases WHERE scholar_id = ?
-                `, [scholar.id]);
-                
-                const [payoutsData] = await pool.query(`
-                    SELECT COALESCE(SUM(amount), 0) as total_paid
-                    FROM scholar_payouts WHERE scholar_user_id = ? AND status = 'completed'
-                `, [scholar.id]);
-                
-                const totalRevenue = parseFloat(salesData[0]?.total_revenue) || 0;
-                const totalPaid = parseFloat(payoutsData[0]?.total_paid) || 0;
-                const scholarEarnings = totalRevenue * 0.70; // 70% for under 100 sales
-                const pendingBalance = Math.max(0, scholarEarnings - totalPaid);
+                const earnings = await require('../services/payments/earningsService').scholarEarnings(pool, scholar.id);
+                const pendingBalance = Number(earnings.summary.pendingBalance);
+                scholar.earningsByCurrency = earnings.summariesByCurrency;
+                scholar.currency = 'EUR';
+                scholar.legacyReconciliationRequired = earnings.summary.legacyReconciliationRequired;
 
                 if (!scholar.stripe_account_id) {
                     return {
@@ -536,160 +462,8 @@ const getAllScholarsStripeStatus = async (req, res) => {
  * Get Scholar's Earnings and Sales Statistics
  */
 const getScholarEarnings = async (req, res) => {
-    try {
-        const scholarUserId = req.user.id;
-
-        // Get total sales from BOTH purchases table (individual videos) AND subject_purchases (course bundles)
-        // Individual video purchases
-        const [videoSalesData] = await pool.query(`
-            SELECT 
-                COUNT(p.id) as total_sales,
-                COALESCE(SUM(v.price), 0) as total_revenue
-            FROM purchases p
-            JOIN videos v ON p.video_id = v.id
-            WHERE v.scholar_user_id = ?
-        `, [scholarUserId]);
-
-        // Course bundle purchases
-        const [bundleSalesData] = await pool.query(`
-            SELECT 
-                COUNT(sp.id) as total_sales,
-                COALESCE(SUM(sp.amount), 0) as total_revenue
-            FROM subject_purchases sp
-            WHERE sp.scholar_id = ?
-        `, [scholarUserId]);
-
-        // Current month bundle sales
-        const [monthlyBundleSalesData] = await pool.query(`
-            SELECT 
-                COUNT(sp.id) as monthly_sales,
-                COALESCE(SUM(sp.amount), 0) as monthly_revenue
-            FROM subject_purchases sp
-            WHERE sp.scholar_id = ? 
-            AND MONTH(sp.created_at) = MONTH(CURRENT_DATE())
-            AND YEAR(sp.created_at) = YEAR(CURRENT_DATE())
-        `, [scholarUserId]);
-
-        // Combine both
-        const videoSales = parseInt(videoSalesData[0]?.total_sales) || 0;
-        const videoRevenue = parseFloat(videoSalesData[0]?.total_revenue) || 0;
-        const bundleSales = parseInt(bundleSalesData[0]?.total_sales) || 0;
-        const bundleRevenue = parseFloat(bundleSalesData[0]?.total_revenue) || 0;
-        const monthlySales = parseInt(monthlyBundleSalesData[0]?.monthly_sales) || 0;
-        const monthlyRevenue = parseFloat(monthlyBundleSalesData[0]?.monthly_revenue) || 0;
-
-        // Get sales by course (bundles)
-        const [salesByCourse] = await pool.query(`
-            SELECT 
-                s.id,
-                s.name as course_name,
-                s.bundle_price,
-                COUNT(sp.id) as sales_count,
-                COALESCE(SUM(sp.amount), 0) as course_revenue,
-                SUM(CASE WHEN MONTH(sp.created_at) = MONTH(CURRENT_DATE()) 
-                         AND YEAR(sp.created_at) = YEAR(CURRENT_DATE()) THEN 1 ELSE 0 END) as monthly_sales,
-                COALESCE(SUM(CASE WHEN MONTH(sp.created_at) = MONTH(CURRENT_DATE()) 
-                         AND YEAR(sp.created_at) = YEAR(CURRENT_DATE()) THEN sp.amount ELSE 0 END), 0) as monthly_revenue
-            FROM subjects s
-            LEFT JOIN subject_purchases sp ON s.id = sp.subject_id AND sp.scholar_id = ?
-            JOIN scholar_subjects ss ON s.id = ss.subject_id AND ss.scholar_user_id = ?
-            GROUP BY s.id, s.name, s.bundle_price
-            ORDER BY sales_count DESC
-        `, [scholarUserId, scholarUserId]);
-
-        // Get payouts received
-        const [payoutsData] = await pool.query(`
-            SELECT 
-                COALESCE(SUM(amount), 0) as total_paid,
-                COUNT(*) as payout_count
-            FROM scholar_payouts 
-            WHERE scholar_user_id = ? AND status = 'completed'
-        `, [scholarUserId]);
-
-        // Get payout history for display
-        const [payoutHistory] = await pool.query(`
-            SELECT id, amount, currency, status, stripe_transfer_id, created_at
-            FROM scholar_payouts 
-            WHERE scholar_user_id = ?
-            ORDER BY created_at DESC
-            LIMIT 20
-        `, [scholarUserId]);
-
-        // Calculate totals
-        const totalSalesCount = videoSales + bundleSales;
-        const totalRevenue = videoRevenue + bundleRevenue;
-        const totalPaid = parseFloat(payoutsData[0]?.total_paid) || 0;
-        
-        // Calculate earnings with 70%/50% fee structure
-        // First 100 at 70%, rest at 50%
-        let scholarEarnings = 0;
-        let platformFee = 0;
-        
-        if (totalSalesCount <= 100) {
-            scholarEarnings = totalRevenue * 0.70;
-            platformFee = totalRevenue * 0.30;
-        } else {
-            // Split calculation
-            const revenueBelow100 = (100 / totalSalesCount) * totalRevenue;
-            const revenueAbove100 = totalRevenue - revenueBelow100;
-            scholarEarnings = (revenueBelow100 * 0.70) + (revenueAbove100 * 0.50);
-            platformFee = (revenueBelow100 * 0.30) + (revenueAbove100 * 0.50);
-        }
-        
-        const pendingBalance = scholarEarnings - totalPaid;
-        
-        // Calculate monthly earnings (70% of monthly revenue for under 100 sales)
-        const monthlyEarnings = monthlySales <= 100 ? monthlyRevenue * 0.70 : monthlyRevenue * 0.50;
-
-        res.json({
-            summary: {
-                totalSales: totalSalesCount,
-                totalRevenue: totalRevenue.toFixed(2),
-                platformFee: platformFee.toFixed(2),
-                scholarEarnings: scholarEarnings.toFixed(2),
-                totalPaid: totalPaid.toFixed(2),
-                pendingBalance: pendingBalance.toFixed(2),
-                payoutCount: parseInt(payoutsData[0]?.payout_count) || 0,
-                // Breakdown
-                videoSales: videoSales,
-                bundleSales: bundleSales,
-                // Monthly data
-                monthlySales: monthlySales,
-                monthlyRevenue: monthlyRevenue.toFixed(2),
-                monthlyEarnings: monthlyEarnings.toFixed(2)
-            },
-            salesByCourse: salesByCourse.map(c => {
-                const courseMonthlySales = parseInt(c.monthly_sales) || 0;
-                const courseMonthlyRevenue = parseFloat(c.monthly_revenue) || 0;
-                const courseMonthlyEarnings = courseMonthlySales <= 100 ? courseMonthlyRevenue * 0.70 : courseMonthlyRevenue * 0.50;
-                return {
-                    id: c.id,
-                    courseName: c.course_name,
-                    bundlePrice: parseFloat(c.bundle_price || 0).toFixed(2),
-                    salesCount: parseInt(c.sales_count) || 0,
-                    revenue: parseFloat(c.course_revenue || 0).toFixed(2),
-                    monthlySales: courseMonthlySales,
-                    monthlyRevenue: courseMonthlyRevenue.toFixed(2),
-                    monthlyEarnings: courseMonthlyEarnings.toFixed(2)
-                };
-            }),
-            payoutHistory: payoutHistory.map(p => ({
-                id: p.id,
-                amount: parseFloat(p.amount).toFixed(2),
-                currency: p.currency || 'EUR',
-                status: p.status,
-                stripeTransferId: p.stripe_transfer_id,
-                date: p.created_at
-            }))
-        });
-
-    } catch (error) {
-        console.error('Error getting scholar earnings:', error);
-        res.status(500).json({ 
-            message: 'Error retrieving earnings data', 
-            error: error.message 
-        });
-    }
+    try { res.json(await require('../services/payments/earningsService').scholarEarnings(pool, req.user.id)); }
+    catch { res.status(503).json({ message: 'Unable to retrieve currency-separated earnings.' }); }
 };
 
 /**

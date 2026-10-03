@@ -1,3 +1,4 @@
+const {auditFinancial} = require('../controller/operationsController');
 const { Router } = require('express');
 const {
     createConnectAccount,
@@ -49,21 +50,22 @@ stripeConnectRoutes.get(
 stripeConnectRoutes.post(
     '/payout',
     authMiddleware,
-    authorizeRoles('Admin', 'SuperAdmin'),
+    authorizeRoles('SuperAdmin'),
+    auditFinancial,
     createPayout
 );
 
 stripeConnectRoutes.get(
     '/scholars-status',
     authMiddleware,
-    authorizeRoles('Admin', 'SuperAdmin'),
+    authorizeRoles('SuperAdmin'),
     getAllScholarsStripeStatus
 );
 
 stripeConnectRoutes.get(
     '/platform-balance',
     authMiddleware,
-    authorizeRoles('Admin', 'SuperAdmin'),
+    authorizeRoles('SuperAdmin'),
     getPlatformBalance
 );
 
