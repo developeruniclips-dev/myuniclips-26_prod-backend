@@ -7,6 +7,7 @@ const rateLimit = require("express-rate-limit");
 const { createApiRateLimiter } = require('./middleware/apiRateLimiter');
 const morgan = require("morgan");
 const fs = require("fs");
+const { requestLogger, logError } = require('./utils/safeLogging');
 const { pool, initializeDatabase } = require('./config/db');
 
 const router = require("./routes");
@@ -31,16 +32,9 @@ if (process.env.NODE_ENV === 'production') {
     path.join(logsDir, 'access.log'), 
     { flags: 'a' }
   );
-  // Custom format that excludes sensitive data
-  app.use(morgan(':remote-addr - :method :url :status :res[content-length] - :response-time ms', { 
-    stream: accessLogStream,
-    skip: (req, res) => {
-      // Don't log health checks or static files
-      return req.url === '/health' || req.url.startsWith('/uploads');
-    }
-  }));
+  app.use(requestLogger(morgan, { production: true, stream: accessLogStream }));
 } else {
-  app.use(morgan('dev'));
+  app.use(requestLogger(morgan));
 }
 
 // ===== SECURITY: Helmet.js for HTTP headers =====
@@ -124,7 +118,7 @@ app.use("/purchase", purchaseRoutes);
 
 // ===== SECURITY: Global Error Handler (sanitized messages) =====
 app.use((err, req, res, next) => {
-  console.error("Error:", err); // Log full error for debugging
+  logError('Request handling failed', err);
   
   // Don't expose internal error details to clients
   const statusCode = err.statusCode || 500;

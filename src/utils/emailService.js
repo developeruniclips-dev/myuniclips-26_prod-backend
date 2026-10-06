@@ -1,4 +1,5 @@
 const nodemailer = require('nodemailer');
+const { logError } = require('./safeLogging');
 
 // Create transporter using environment variables
 // For Gmail, you need to use an App Password (not your regular password)
@@ -92,11 +93,11 @@ The Uniclips Team
 
     try {
         const info = await transporter.sendMail(mailOptions);
-        console.log('Password reset email sent:', info.messageId);
+        console.log('Password reset email delivery completed');
         return { success: true, messageId: info.messageId };
     } catch (error) {
-        console.error('Error sending password reset email:', error);
-        return { success: false, error: error.message };
+        logError('Password reset email delivery failed', error);
+        return { success: false, error: 'Email delivery failed' };
     }
 };
 
@@ -110,7 +111,7 @@ const verifyEmailConfig = async () => {
         console.log('Email configuration is valid');
         return true;
     } catch (error) {
-        console.error('Email configuration error:', error.message);
+        logError('Email configuration verification failed', error);
         return false;
     }
 };
@@ -201,11 +202,11 @@ The Uniclips Team
 
     try {
         const info = await transporter.sendMail(mailOptions);
-        console.log('Stripe verification email sent:', info.messageId);
+        console.log('Verification email delivery completed');
         return { success: true, messageId: info.messageId };
     } catch (error) {
-        console.error('Error sending Stripe verification email:', error);
-        return { success: false, error: error.message };
+        logError('Verification email delivery failed', error);
+        return { success: false, error: 'Email delivery failed' };
     }
 };
 

@@ -1,5 +1,6 @@
 const jwt = require("jsonwebtoken");
 const { sessionTimeoutMiddleware } = require("./sessionTimeout");
+const { logError } = require('../utils/safeLogging');
 
 const authMiddleware = (req, res, next) => {
   const token = req.headers.authorization?.split(" ")[1];
@@ -13,7 +14,7 @@ const authMiddleware = (req, res, next) => {
     // Check session timeout after authentication
     sessionTimeoutMiddleware(req, res, next);
   } catch (err) {
-    console.error('Token verification error:', err.message);
+    logError('Token verification failed', err);
     
     // Check if token is expired
     if (err.name === 'TokenExpiredError') {

@@ -159,7 +159,9 @@ function startupDouble(ready) {
       if (name === './config/db') return { initializeDatabase: () => ready, pool: { end: async () => state.ended++ } };
       if (name === './middleware/apiRateLimiter') return { createApiRateLimiter: () => () => {} };
       if (name === './controller/stripeWebhookController') return { stripeWebhook: () => {} };
-      if (['cors', 'helmet', 'express-rate-limit', 'morgan'].includes(name)) return () => () => {};
+      if (name === './utils/safeLogging') return require('../src/utils/safeLogging');
+      if (name === 'morgan') return Object.assign(() => () => {}, { token() {} });
+      if (['cors', 'helmet', 'express-rate-limit'].includes(name)) return () => () => {};
       if (['./routes', './routes/purchaseRoutes'].includes(name)) return () => {};
       throw Error('Unexpected dependency');
     }

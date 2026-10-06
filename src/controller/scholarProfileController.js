@@ -1,4 +1,6 @@
 const { pool } = require("../config/db");
+const { logError } = require('../utils/safeLogging');
+const { scholarProfileResponse } = require('../utils/userResponses');
 
 // Get all scholar profile applications for admin
 const getAllScholarApplications = async (req, res) => {
@@ -30,10 +32,9 @@ const getAllScholarApplications = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Error fetching scholar applications:", error);
+    logError("Error fetching scholar applications:", error);
     res.status(500).json({
-      message: "Server error fetching scholar applications",
-      error
+      message: "Server error fetching scholar applications"
     });
   }
 };
@@ -69,10 +70,9 @@ const approveScholarApplication = async (req, res) => {
     res.json({ message: "Scholar application approved successfully" });
 
   } catch (error) {
-    console.error("Error approving scholar application:", error);
+    logError("Error approving scholar application:", error);
     res.status(500).json({
-      message: "Server error approving scholar application",
-      error
+      message: "Server error approving scholar application"
     });
   }
 };
@@ -107,10 +107,9 @@ const rejectScholarApplication = async (req, res) => {
     res.json({ message: "Scholar application rejected" });
 
   } catch (error) {
-    console.error("Error rejecting scholar application:", error);
+    logError("Error rejecting scholar application:", error);
     res.status(500).json({
-      message: "Server error rejecting scholar application",
-      error
+      message: "Server error rejecting scholar application"
     });
   }
 };
@@ -151,15 +150,14 @@ const getScholarProfileStatus = async (req, res) => {
 
     res.json({
       isScholar: true,
-      profile: await require('../utils/academicContext').scholarContext(pool, user_id),
+      profile: scholarProfileResponse(await require('../utils/academicContext').scholarContext(pool, user_id)),
       approved: profile[0].approved === 1
     });
 
   } catch (error) {
-    console.error("Error fetching scholar profile status:", error);
+    logError("Error fetching scholar profile status:", error);
     res.status(500).json({
-      message: "Server error fetching scholar profile status",
-      error
+      message: "Server error fetching scholar profile status"
     });
   }
 };

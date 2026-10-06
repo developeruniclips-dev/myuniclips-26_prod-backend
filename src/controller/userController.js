@@ -1,6 +1,8 @@
 const { UserModel } = require('../models/User');
 const { pool } = require('../config/db');
 const { learnerPreferences } = require('../utils/learnerPreferences');
+const { userResponse } = require('../utils/userResponses');
+const { logError } = require('../utils/safeLogging');
 
 //get all users
 const getAllUsers = async(req, res) => {
@@ -26,9 +28,9 @@ const getAllUsers = async(req, res) => {
             LEFT JOIN scholar_profile sp ON u.id = sp.user_id
             ORDER BY u.id ASC
         `);
-        res.status(200).json(rows);
+        res.status(200).json(rows.map(row => userResponse(row)));
     } catch (error) {
-        console.error("Error fetching users:", error);
+        logError("Error fetching users:", error);
         res.status(500).json({ message: "Internal server error" });
     }
 };
@@ -41,9 +43,9 @@ const getOneUser = async(req, res) => {
             return res.status(404).json({message: 'User ID not found'});
         }
         const [row] = await UserModel.findById(id);
-        res.status(201).json(row);
+        res.status(201).json(row.map(user => userResponse(user)));
     } catch (error) {
-        console.error("Error fetching user", error);
+        logError("Error fetching user", error);
         res.status(500).json({message: "Server error fetching user"});
     }
 };
@@ -64,7 +66,7 @@ const updateUser = async (req, res) => {
 
         res.json({ message: "User updated successfully" });
     } catch (error) {
-        console.error("Error updating user:", error);
+        logError("Error updating user:", error);
         res.status(500).json({ message: "Server error updating user" });
     }
 };
@@ -85,9 +87,8 @@ const deleteUser = async(req, res) => {
         res.json({ message: "User deleted successfully" });
         
     } catch (error) {
-        console.error("Error deleting the user:", error.message);
-        console.error("Full error:", error);
-        res.status(500).json({message: "Server Error deleting the user", error: error.message});
+        logError("Error deleting the user:", error);
+        res.status(500).json({message: "Server Error deleting the user"});
     }
 };
 
@@ -120,17 +121,10 @@ const getUserProfile = async (req, res) => {
         
         const roles = roleRows.map(row => row.role_name);
         
-        // Remove sensitive data
-        delete user.password;
-        
-        res.json({
-            ...user,
-            roles
-        });
+        res.json(userResponse(user, { roles }));
     } catch (error) {
-        console.error("Error fetching user profile:", error);
-        console.error("Full error:", error);
-        res.status(500).json({ message: "Server error fetching profile", error: error.message });
+        logError("Error fetching user profile:", error);
+        res.status(500).json({ message: "Server error fetching profile" });
     }
 };
 
@@ -184,9 +178,8 @@ const updateUserProfile = async (req, res) => {
         if (error.code === 'ER_BAD_FIELD_ERROR') {
             return res.status(503).json({ message: "Profile preferences are not available yet. Please try again after the profile update is enabled." });
         }
-        console.error("Error updating user profile:", error);
-        console.error("Full error:", error);
-        res.status(500).json({ message: "Server error updating profile", error: error.message });
+        logError("Error updating user profile:", error);
+        res.status(500).json({ message: "Server error updating profile" });
     }
 };
 
@@ -227,7 +220,7 @@ const deleteUserBySuperAdmin = async (req, res) => {
         await UserModel.delete(id);
         res.json({ message: "User account deleted successfully by SuperAdmin" });
     } catch (error) {
-        console.error("Error deleting user by SuperAdmin:", error);
+        logError("Error deleting user by SuperAdmin:", error);
         res.status(500).json({ message: "Server error deleting user" });
     }
 };
@@ -256,14 +249,13 @@ const getAllUsersWithRoles = async (req, res) => {
         `);
         
         // Parse roles string to array
-        const usersWithRoles = rows.map(user => ({
-            ...user,
+        const usersWithRoles = rows.map(user => userResponse(user, {
             roles: user.roles ? user.roles.split(',') : []
         }));
         
         res.status(200).json(usersWithRoles);
     } catch (error) {
-        console.error("Error fetching users with roles:", error);
+        logError("Error fetching users with roles:", error);
         res.status(500).json({ message: "Internal server error" });
     }
 };
@@ -316,7 +308,7 @@ const createSuperAdmin = async (req, res) => {
             userId: userId
         });
     } catch (error) {
-        console.error("Error creating SuperAdmin:", error);
+        logError("Error creating SuperAdmin:", error);
         res.status(500).json({ message: "Server error creating SuperAdmin" });
     }
 };

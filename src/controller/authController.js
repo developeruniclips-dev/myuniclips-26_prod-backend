@@ -5,6 +5,8 @@ const { UserModel } = require("../models/User");
 const { UserRoleModel } = require("../models/userRole");
 const { ScholarProfileModel } = require("../models/scholarProfile");
 const { hashPassword, verifyPassword } = require("../utils/passwordHasher");
+const { userResponse, scholarProfileResponse } = require('../utils/userResponses');
+const { logError } = require('../utils/safeLogging');
 
 // Security constants
 const MAX_FAILED_ATTEMPTS = 5;
@@ -61,10 +63,6 @@ const userRegister = async (req, res) => {
         const [scholarRow] = await ScholarProfileModel.findByUserId(userId);
 
         const user = userRow[0];
-        if (scholarRow.length > 0) {
-            user.scholarProfile = scholarRow[0];
-        }
-        delete user.password;
 
         // Generate JWT
         const token = jwt.sign(
@@ -75,12 +73,12 @@ const userRegister = async (req, res) => {
 
         res.status(201).json({
             message: "User registered successfully",
-            user,
+            user: userResponse(user, scholarRow.length > 0 ? { scholarProfile: scholarRow[0] } : {}),
             token
         });
 
     } catch (error) {
-        console.error("Error registering user:", error);
+        logError("Error registering user:", error);
         res.status(500).json({ message: "Server error registering user" });
     }
 };
@@ -89,7 +87,7 @@ const login = async (req, res) => {
     try {
         const { email, password, twoFactorCode } = req.body;
         
-        console.log('Login attempt for:', email);
+        console.log('Login attempt');
 
         //find user
         const [userRows] = await UserModel.findByEmail(email);
@@ -185,10 +183,10 @@ const login = async (req, res) => {
                     'UPDATE users SET password = ? WHERE id = ?',
                     [newHash, user.id]
                 );
-                console.log(`Upgraded password hash to Argon2 for user ${user.id}`);
+                console.log('Password hash upgraded to Argon2');
             } catch (rehashError) {
                 // Non-critical error, log and continue
-                console.error('Failed to upgrade password hash:', rehashError.message);
+                logError('Failed to upgrade password hash:', rehashError);
             }
         }
 
@@ -222,24 +220,18 @@ const login = async (req, res) => {
         refreshTokenExpires.setDate(refreshTokenExpires.getDate() + REFRESH_TOKEN_EXPIRY_DAYS);
         await UserModel.updateRefreshToken(user.id, refreshToken, refreshTokenExpires);
 
-        //remove password from the user object
-        delete user.password;
-        delete user.two_factor_secret;
-        delete user.two_factor_backup_codes;
-        delete user.refresh_token;
-
         res.status(200).json({
             message: "Login successful",
-            user,
+            user: userResponse(user),
             roles,
-            scholarProfile,
+            scholarProfile: scholarProfileResponse(scholarProfile),
             token,
             refreshToken,
             expiresIn: 3600 // 1 hour in seconds
         });
 
     } catch (error) {
-        console.error('Error login in user :', error);
+        logError('Error login in user :', error);
         res.status(500).json({message: 'Server error logging in user'});
     }
 };
@@ -295,8 +287,7 @@ const becomeScholar = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error submitting scholar application:', error);
-        console.error('Error details:', error.message, error.stack);
+        logError('Error submitting scholar application:', error);
         res.status(500).json({ 
             message: 'Server error submitting application',
             error: error.message 
@@ -352,7 +343,7 @@ const refreshAccessToken = async (req, res) => {
         });
         
     } catch (error) {
-        console.error('Error refreshing token:', error);
+        logError('Error refreshing token:', error);
         res.status(500).json({ message: 'Server error refreshing token' });
     }
 };
@@ -369,7 +360,7 @@ const logout = async (req, res) => {
         res.status(200).json({ message: 'Logged out successfully' });
         
     } catch (error) {
-        console.error('Error logging out:', error);
+        logError('Error logging out:', error);
         res.status(500).json({ message: 'Server error logging out' });
     }
 };

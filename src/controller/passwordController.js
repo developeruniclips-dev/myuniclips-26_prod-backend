@@ -5,6 +5,7 @@ const { UserRoleModel } = require("../models/userRole");
 const { pool } = require("../config/db");
 const { sendPasswordResetEmail } = require("../utils/emailService");
 const { hashPassword, verifyPassword } = require("../utils/passwordHasher");
+const { logError } = require('../utils/safeLogging');
 
 // Helper function to ensure password reset columns exist
 const ensurePasswordResetColumnsExist = async () => {
@@ -28,7 +29,7 @@ const ensurePasswordResetColumnsExist = async () => {
             console.log('Password reset columns added successfully');
         }
     } catch (error) {
-        console.error('Error checking/adding password reset columns:', error.message);
+        logError('Error checking/adding password reset columns:', error);
     }
 };
 
@@ -61,7 +62,7 @@ const requestPasswordReset = async (req, res) => {
             const [roleRows] = await UserRoleModel.getRolesById(user.id);
             roles = roleRows.map(row => row.name);
         } catch (e) {
-            console.warn('Could not fetch user roles:', e.message);
+            logError('Could not fetch user roles:', e);
         }
 
         if (roles.includes('SuperAdmin')) {
@@ -90,11 +91,9 @@ const requestPasswordReset = async (req, res) => {
         const emailResult = await sendPasswordResetEmail(email, resetUrl, userName);
         
         if (!emailResult.success) {
-            console.error('Failed to send password reset email:', emailResult.error);
-            // Still log the URL for debugging
-            console.log(`Password reset URL for ${email}: ${resetUrl}`);
+            console.error('Password reset email delivery failed');
         } else {
-            console.log(`Password reset email sent to ${email}`);
+            console.log('Password reset email delivery completed');
         }
 
         res.status(200).json({ 
@@ -102,7 +101,7 @@ const requestPasswordReset = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Error requesting password reset:", error);
+        logError("Error requesting password reset:", error);
         res.status(500).json({ message: "Server error processing request" });
     }
 };
@@ -137,7 +136,7 @@ const resetPassword = async (req, res) => {
             const [roleRows] = await UserRoleModel.getRolesById(user.id);
             roles = roleRows.map(row => row.name);
         } catch (e) {
-            console.warn('Could not fetch user roles:', e.message);
+            logError('Could not fetch user roles:', e);
         }
 
         if (roles.includes('SuperAdmin')) {
@@ -175,7 +174,7 @@ const resetPassword = async (req, res) => {
         res.status(200).json({ message: "Password reset successfully" });
 
     } catch (error) {
-        console.error("Error resetting password:", error);
+        logError("Error resetting password:", error);
         res.status(500).json({ message: "Server error resetting password" });
     }
 };
@@ -224,7 +223,7 @@ const changePassword = async (req, res) => {
         res.status(200).json({ message: "Password changed successfully" });
 
     } catch (error) {
-        console.error("Error changing password:", error);
+        logError("Error changing password:", error);
         res.status(500).json({ message: "Server error changing password" });
     }
 };
