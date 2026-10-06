@@ -7,6 +7,7 @@ const rateLimit = require("express-rate-limit");
 const { createApiRateLimiter } = require('./middleware/apiRateLimiter');
 const morgan = require("morgan");
 const fs = require("fs");
+const { pool, initializeDatabase } = require('./config/db');
 
 const router = require("./routes");
 const purchaseRoutes = require("./routes/purchaseRoutes");
@@ -143,12 +144,16 @@ app.use((req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+const startup = initializeDatabase().then(() => app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
   console.log(`📁 Uploads stored locally in: ${path.join(__dirname, "../uploads")}`);
   console.log(`🔒 Security: Helmet.js enabled, Rate limiting active`);
 
   // Schema changes belong to separately authorized, explicit migration scripts.
+})).catch(async () => {
+  console.error('Database initialization failed; server not started');
+  try { await pool.end(); } catch { /* Do not expose a raw driver cleanup error. */ }
+  process.exitCode = 1;
 });
 
-module.exports = { app, authLimiter };
+module.exports = { app, authLimiter, startup };
