@@ -19,6 +19,8 @@ const registerValidation = [
         .normalizeEmail()
         .isLength({ max: 255 }).withMessage('Email too long'),
     body('password')
+        .isString().withMessage('Password must be text').bail()
+        .isLength({ max: 256 }).withMessage('Password too long')
         .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
         .matches(/[A-Z]/).withMessage('Password must contain uppercase letter')
         .matches(/[a-z]/).withMessage('Password must contain lowercase letter')
@@ -40,8 +42,11 @@ const registerValidation = [
 const loginValidation = [
     body('email')
         .isEmail().withMessage('Valid email is required')
+        .isLength({ max: 254 }).withMessage('Email too long')
         .normalizeEmail(),
     body('password')
+        .isString().withMessage('Password must be text').bail()
+        .isLength({ max: 256 }).withMessage('Password too long')
         .notEmpty().withMessage('Password is required'),
     validate
 ];

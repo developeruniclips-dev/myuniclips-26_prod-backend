@@ -3,6 +3,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const http = require('node:http');
+process.env.JWT_SECRET='P1A_SYNTHETIC_SIGNING_KEY';
+const S=require('../src/utils/authSecurity');
 const express = require('express'), morgan = require('morgan');
 const { Writable } = require('node:stream');
 const { userResponse, scholarProfileResponse } = require('../src/utils/userResponses');
@@ -44,13 +46,14 @@ function load(file, overrides = {}) {
   const logs = [], logger = Object.fromEntries(['log', 'warn', 'error'].map(level => [level, (...args) => logs.push({ level, args })]));
   const module = { exports: {} };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src', file), 'utf8'), {
-    module, console: logger, Date, Buffer,
+    module, console: logger, Date, Buffer, URL,
     process: { env: { JWT_SECRET: 'SYNTHETIC_SIGNING_KEY', FRONTEND_URL: 'https://frontend.example.invalid' } },
     require(name) {
       if (Object.hasOwn(overrides, name)) return overrides[name];
       if (name === '../utils/userResponses') return { userResponse, scholarProfileResponse };
       if (['../utils/safeLogging', './safeLogging'].includes(name)) return { logError: (event, error) => logError(event, error, logger) };
-      if (name === 'bcryptjs' || name === 'crypto') return require(name);
+      if (name === '../utils/authSecurity') return S;
+      if (['bcryptjs','crypto','node:crypto','jsonwebtoken'].includes(name)) return require(name);
       throw Error('Unexpected dependency: ' + name);
     }
   }, { filename: file });
@@ -104,22 +107,31 @@ test('legacy individual and list user responses use the same credential exclusio
   }
 });
 
+function lifecycleHarness(row,{failure,mutations=[]}={}) {
+ const current={...row,refresh_token:S.refreshVerifier('a'.repeat(128)),refresh_seconds:86400,idle_seconds:0,refresh_valid:1};
+ const db={beginTransaction:async()=>{},commit:async()=>{},rollback:async()=>{},release(){},query:async(sql,args)=>{
+  assert.doesNotMatch(sql,/\b(?:CREATE|ALTER|DROP)\b/i);
+  if(failure)throw failure;
+  if(sql.includes('FROM user_roles'))return [[{name:'Learner'},{name:'Scholar'}]];
+  if(sql.includes('FROM scholar_profile'))return [[{...scholar,...security}]];
+  if(sql.startsWith('SELECT'))return [[current]];
+  if(sql.startsWith('UPDATE users SET refresh_token=?')){mutations.push(args);current.refresh_token=args[0];}
+  return [{affectedRows:1}];
+ }};
+ return load('services/authLifecycle.js',{'../config/db':{pool:{query:db.query,getConnection:async()=>db}},
+  '../utils/passwordHasher':{hashPassword:async()=>'SYNTHETIC_HASH',verifyPassword:async()=>({valid:true,needsRehash:false})},
+  '../utils/authSecurity':{...S,signAccess:()=> 'SYNTHETIC_NEW_ACCESS_TOKEN'},'../middleware/sessionTimeout':{SESSION_TIMEOUT_MINUTES:30}}).controller;
+}
 function authHarness({ register = false, failure } = {}) {
-  const row = { ...product, ...security, two_factor_enabled: 0 }, mutations = [];
-  const model = {
-    findByEmail: async () => [register ? [] : [row]], findById: async () => [[row]],
-    create: async () => [{ insertId: 7 }], resetFailedAttempts: async () => {}, updateLastLogin: async () => {},
-    updateRefreshToken: async (...args) => mutations.push(args), updateLastActivity: async () => {}
-  };
-  const result = load('controller/authController.js', {
-    '../models/User': { UserModel: model },
-    '../models/userRole': { UserRoleModel: { assignRole: async () => {}, getRolesById: async () => [[{ name: 'Learner' }, { name: 'Scholar' }]] } },
-    '../models/scholarProfile': { ScholarProfileModel: { create: async () => {}, findByUserId: async () => [[{ ...scholar, ...security }]] } },
-    '../utils/passwordHasher': { hashPassword: async () => 'SYNTHETIC_HASH', verifyPassword: async () => ({ valid: true, needsRehash: false }) },
-    '../config/db': { pool: { query: async () => { if (failure) throw failure; return [[row]]; } } },
-    jsonwebtoken: { sign: () => 'SYNTHETIC_NEW_ACCESS_TOKEN' }
-  });
-  return { ...result, mutations, row };
+ const row={...product,...security,two_factor_enabled:0},mutations=[];
+ const lifecycle=lifecycleHarness(row,{failure,mutations});
+ const result=load('controller/authController.js',{
+  '../services/authLifecycle':lifecycle,
+  '../models/User':{UserModel:{findByEmail:async()=>[register?[]:[row]],findById:async()=>[[row]],create:async()=>[{insertId:7}]}},
+  '../models/userRole':{UserRoleModel:{assignRole:async()=>{}}},
+  '../models/scholarProfile':{ScholarProfileModel:{create:async()=>{},findByUserId:async()=>[[{...scholar,...security}]]}},
+  '../utils/passwordHasher':{hashPassword:async()=>'SYNTHETIC_HASH'},'../config/db':{pool:{}}
+ });return {...result,mutations,row};
 }
 test('registration projects user and nested Scholar product data, not credential rows', async () => {
   const h = authHarness({ register: true }), res = response();
@@ -137,15 +149,15 @@ test('login excludes stored credentials but retains intentional new token envelo
   assert.deepEqual(res.body.user, product);
   assert.deepEqual(Array.from(res.body.roles), ['Learner', 'Scholar']);
   assert.equal(res.body.token, 'SYNTHETIC_NEW_ACCESS_TOKEN');
-  assert.equal(res.body.refreshToken, h.mutations[0][1]);
+  assert.equal(S.refreshVerifier(res.body.refreshToken), h.mutations[0][0]);
   assert.notEqual(res.body.refreshToken, security.refresh_token);
   assert.equal(res.body.expiresIn, 3600);
 });
 test('refresh keeps its explicit token-only envelope and never serializes the selected User row', async () => {
   const h = authHarness(), res = response();
-  await h.controller.refreshAccessToken({ body: { refreshToken: 'SYNTHETIC_INPUT_REFRESH' } }, res);
+  await h.controller.refreshAccessToken({ body: { refreshToken: 'a'.repeat(128) } }, res);
   assert.deepEqual(Object.keys(res.body).sort(), ['expiresIn', 'refreshToken', 'token']);
-  assert.equal(res.body.refreshToken, h.mutations[0][1]);
+  assert.equal(S.refreshVerifier(res.body.refreshToken), h.mutations[0][0]);
   assert.equal(res.body.expiresIn, 3600);
   assert.equal(JSON.stringify(res.body).includes(security.password), false);
 });
@@ -179,7 +191,7 @@ function assertNoSentinels(logs, secrets = [sentinel]) {
 }
 test('safe error logging drops message/stack/SQL/body/headers and unrecognized error codes', () => {
   const logs = [], logger = { error: (...args) => logs.push(args) };
-  const err = Object.assign(new Error(sentinel), { code: sentinel, sql: sentinel, body: { refreshToken: sentinel }, headers: { authorization: sentinel, cookie: sentinel } });
+  const err = Object.assign(new Error(sentinel), { code: sentinel, sql: sentinel, body: { refreshToken: 'b'.repeat(128) }, headers: { authorization: sentinel, cookie: sentinel } });
   logError('Operation failed', err, logger);
   assert.deepEqual(logs, [['Operation failed', { code: 'UNEXPECTED_ERROR' }]]);
   err.code = 'EAUTH'; logError('Email delivery failed', err, logger);
@@ -193,7 +205,8 @@ test('password-reset email failure never logs reset URL/token, recipient, Author
     '../models/userRole': { UserRoleModel: { getRolesById: async () => [[{ name: 'Learner' }]] } },
     '../config/db': { pool: { query: async sql => { assert.doesNotMatch(sql, /ALTER TABLE/); return [sql.startsWith('SELECT COLUMN_NAME') ? [{}, {}] : []]; } } },
     '../utils/emailService': { sendPasswordResetEmail: async (email, url) => { resetURL = url; return { success: false, error: sentinel }; } },
-    '../utils/passwordHasher': {}
+    '../utils/passwordHasher': {},
+    '../services/authLifecycle':lifecycleHarness({...product,...security,email:'synthetic-recipient@example.invalid'})
   }), res = response();
   await h.controller.requestPasswordReset({ body: { email: 'synthetic-recipient@example.invalid' }, headers: { authorization: sentinel, cookie: sentinel } }, res);
   assert.equal(res.statusCode, 200);
@@ -216,8 +229,8 @@ test('real email helper with an SMTP double keeps reset link in mail but not fai
 });
 test('refresh query failures cannot log the supplied bearer credential or raw driver fields', async () => {
   const h = authHarness({ failure: Object.assign(new Error(sentinel), { code: 'ER_BAD_FIELD_ERROR', sql: sentinel }) }), res = response();
-  await h.controller.refreshAccessToken({ body: { refreshToken: sentinel }, headers: { authorization: sentinel, cookie: sentinel } }, res);
-  assert.equal(res.statusCode, 500); assertNoSentinels(h.logs);
+  await h.controller.refreshAccessToken({ body: { refreshToken: 'b'.repeat(128) }, headers: { authorization: sentinel, cookie: sentinel } }, res);
+  assert.equal(res.statusCode, 503); assertNoSentinels(h.logs, [sentinel,'b'.repeat(128)]);
 });
 test('request pathname excludes every query value, fragment and absolute-target credentials', () => {
   for (const target of ['/example?token=' + sentinel + '&normal=value',

@@ -4,7 +4,8 @@ const {
     verify2FA, 
     validate2FA, 
     disable2FA, 
-    get2FAStatus 
+    get2FAStatus,
+    regenerateBackupCodes
 } = require("../controller/twoFactorController");
 const { authMiddleware } = require("../middleware/auth");
 const { authorizeRoles } = require("../middleware/roles");
@@ -23,9 +24,10 @@ const twoFactorLimiter = rateLimit({
 
 // Protected routes - require authentication
 router.get('/status', authMiddleware, get2FAStatus);
-router.post('/setup', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), setup2FA);
+router.post('/setup', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), twoFactorLimiter, setup2FA);
 router.post('/verify', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), twoFactorLimiter, verify2FA);
 router.post('/disable', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), twoFactorLimiter, disable2FA);
+router.post('/backup-codes', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), twoFactorLimiter, regenerateBackupCodes);
 
 // Public route for login 2FA validation (called after initial login)
 router.post('/validate', twoFactorLimiter, validate2FA);

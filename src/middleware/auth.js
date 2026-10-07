@@ -3,16 +3,20 @@ const { sessionTimeoutMiddleware } = require("./sessionTimeout");
 const { logError } = require('../utils/safeLogging');
 
 const authMiddleware = (req, res, next) => {
-  const token = req.headers.authorization?.split(" ")[1];
+  const match = typeof req.headers.authorization === 'string' && req.headers.authorization.match(/^Bearer ([^\s]+)$/i);
+  const token = match && match[1];
 
   if (!token) return res.status(401).json({ message: "No token provided" });
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+    if (decoded.purpose !== 'access' || !Number.isSafeInteger(decoded.id) || typeof decoded.session !== 'string') {
+      return res.status(401).json({ message: 'Please sign in again', code: 'SESSION_REVOKED' });
+    }
     req.user = decoded; // contains id, email, name, roles
     
     // Check session timeout after authentication
-    sessionTimeoutMiddleware(req, res, next);
+    return sessionTimeoutMiddleware(req, res, next);
   } catch (err) {
     logError('Token verification failed', err);
     

@@ -36,6 +36,7 @@ module.exports={data,cases,actions,handler,actor,requireStaff,requireOwner,legac
         const target=id(req.params.id),first=text(req.body.fname,'First name',100),last=text(req.body.lname,'Last name',100),email=text(req.body.email,'Email',254).toLowerCase();
         if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail(400,'Valid email required');
         const [[user]]=await db.query('SELECT id,email FROM users WHERE id=? FOR UPDATE',[target]);if(!user)fail(404,'User not found');
+        if(email!==user.email.toLowerCase())fail(403,'Recovery email changes require a verified address-change process');
         if(req.body.confirmation!==`UPDATE ${user.email}`)fail(400,'Confirm the target account before updating it');
         await db.query('UPDATE users SET fname=?,lname=?,email=? WHERE id=?',[first,last,email,target]);
         await audit(db,current,'USER_DETAILS_UPDATED','user',target,{emailChanged:email!==user.email});return{success:true};

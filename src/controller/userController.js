@@ -62,7 +62,13 @@ const updateUser = async (req, res) => {
             return res.status(404).json({ message: "User not found" });
         }
 
-        await UserModel.update(id, fname, lname, email);
+        const normalized = await require('../utils/authSecurity').normalizeEmail(email);
+        if (!normalized) return res.status(400).json({ message: 'Valid email is required' });
+        if (normalized !== await require('../utils/authSecurity').normalizeEmail(existing[0].email)) {
+            return res.status(403).json({ message: 'Recovery email changes require a verified address-change process' });
+        }
+
+        await UserModel.update(id, fname, lname, existing[0].email);
 
         res.json({ message: "User updated successfully" });
     } catch (error) {
@@ -153,7 +159,16 @@ const updateUserProfile = async (req, res) => {
         const updateFields = await learnerPreferences(req.body, pool);
         if (fname) updateFields.fname = fname;
         if (lname) updateFields.lname = lname;
-        if (email) updateFields.email = email;
+        if (email !== undefined) {
+            const { normalizeEmail } = require('../utils/authSecurity');
+            const address = await normalizeEmail(email);
+            if (!address) return res.status(400).json({ message: 'Valid email is required' });
+            const [rows] = await UserModel.findById(userId);
+            if (!rows[0] || address !== await normalizeEmail(rows[0].email)) {
+                return res.status(403).json({ message: 'Recovery email changes require a verified address-change process' });
+            }
+            // The unchanged address is accepted for old clients but never written.
+        }
         if (bio !== undefined) updateFields.bio = bio;
         if (favoriteSubject !== undefined) updateFields.favorite_subject = favoriteSubject;
         if (favoriteFood !== undefined) updateFields.favorite_food = favoriteFood;
