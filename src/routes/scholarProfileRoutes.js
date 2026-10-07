@@ -8,6 +8,7 @@ const { authMiddleware } = require("../middleware/auth");
 const { authorizeRoles } = require("../middleware/roles");
 
 const scholarProfileRoutes = Router();
+scholarProfileRoutes.get('/:userId/task-card', authMiddleware, require('../controller/taskCardController').getTaskCard);
 
 // Scholar routes - check own profile status
 // Any authenticated user can check their scholar application status

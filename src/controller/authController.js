@@ -238,6 +238,7 @@ const login = async (req, res) => {
 
 // Apply to become a scholar (for existing users)
 const becomeScholar = async (req, res) => {
+    if (req.uploadState) req.uploadState.processing = true;
     try {
         const userId = req.user.id; // From auth middleware
         const { degree, year, universityId, countryId } = req.body;
@@ -269,18 +270,29 @@ const becomeScholar = async (req, res) => {
         // Handle task card file upload
         let taskCardUrl = null;
         if (req.file) {
-            taskCardUrl = `uploads/task-cards/${req.file.filename}`;
+            taskCardUrl = require('../middleware/uploadSecurity').storedReference('taskCard', req.file.filename);
         }
 
-        // Create scholar profile (unapproved by default)
-        await ScholarProfileModel.create(userId, university, degree, parseInt(year), taskCardUrl);
-
-        // Update user's isScholar flag
-        const { pool } = require('../config/db');
-        await pool.query('UPDATE users SET isScholar = 1 WHERE id = ?', [userId]);
-
-        // Assign Scholar role (even though not approved yet)
-        await UserRoleModel.assignRole(userId, 3); // 3 = Scholar role
+        // Make document reference, application and role persistence atomic.
+        const connection = await db.getConnection();
+        let committing = false;
+        try {
+            await connection.beginTransaction();
+            const [[user]] = await connection.query('SELECT id FROM users WHERE id=? FOR UPDATE', [userId]);
+            if (!user) throw new Error('Applicant no longer exists');
+            const [duplicates] = await connection.query('SELECT id FROM scholar_profile WHERE user_id=?', [userId]);
+            if (duplicates.length) { await connection.rollback(); return res.status(400).json({message:'You have already applied to become a scholar'}); }
+            await connection.query('INSERT INTO scholar_profile (user_id, university, degree, year, task_card_url) VALUES (?, ?, ?, ?, ?)', [userId, university, degree, parseInt(year), taskCardUrl]);
+            await connection.query('UPDATE users SET isScholar = 1 WHERE id = ?', [userId]);
+            await connection.query('INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)', [userId, 3]);
+            committing = true;
+            await connection.commit();
+            if (req.file) req.uploadState?.retained.add(req.file.path);
+        } catch (error) {
+            if (committing && req.file) req.uploadState?.retained.add(req.file.path);
+            await connection.rollback(); throw error;
+        }
+        finally { connection.release(); }
 
         res.status(201).json({
             message: "Scholar application submitted successfully. Awaiting admin approval."
@@ -289,9 +301,10 @@ const becomeScholar = async (req, res) => {
     } catch (error) {
         logError('Error submitting scholar application:', error);
         res.status(500).json({ 
-            message: 'Server error submitting application',
-            error: error.message 
+            message: 'Server error submitting application'
         });
+    } finally {
+        if (req.uploadState) await req.uploadState.finish();
     }
 };
 

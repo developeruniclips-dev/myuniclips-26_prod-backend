@@ -42,8 +42,7 @@ async function courseVideos(db, scholarId, subjectId) {
     const [rows] = await db.query(`SELECT * FROM videos WHERE scholar_user_id = ? AND subject_id = ? ORDER BY sequence_index, id`, [scholarId, subjectId]);
     return rows;
 }
-// One connection holds the MySQL advisory lock through Vimeo upload. No SQL transaction
-// stays open during the network transfer. All content mutations share this course lock.
+// Content mutations share this short database lock; release it before provider I/O.
 async function withCourseLock(pool, scholarId, subjectId, work) {
     const key = `uniclips:course:${positiveId(scholarId)}:${positiveId(subjectId)}`;
     const db = await pool.getConnection();

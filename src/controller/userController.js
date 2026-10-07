@@ -130,6 +130,7 @@ const getUserProfile = async (req, res) => {
 
 // Update user profile with file upload
 const updateUserProfile = async (req, res) => {
+    if (req.uploadState) req.uploadState.processing = true;
     try {
         const userId = req.user.id;
         const {
@@ -146,7 +147,7 @@ const updateUserProfile = async (req, res) => {
         
         // Handle profile image upload
         if (req.file) {
-            profileImageUrl = req.file.path.replace(/\\/g, '/');
+            profileImageUrl = require('../middleware/uploadSecurity').storedReference('image', req.file.filename);
         }
         
         const updateFields = await learnerPreferences(req.body, pool);
@@ -170,7 +171,30 @@ const updateUserProfile = async (req, res) => {
         const setClause = fields.map(field => `${field} = ?`).join(', ');
         const query = `UPDATE users SET ${setClause} WHERE id = ?`;
         
-        await pool.query(query, [...values, userId]);
+        if (req.file) {
+            const { roots, profilePath, removeStored } = require('../middleware/uploadSecurity');
+            const db = await pool.getConnection();
+            let oldReference;
+            let committing = false;
+            try {
+                await db.beginTransaction();
+                const [[existing]] = await db.query('SELECT profile_image_url FROM users WHERE id = ? FOR UPDATE', [userId]);
+                if (!existing) throw new Error('Profile no longer exists');
+                oldReference = existing.profile_image_url;
+                await db.query(query, [...values, userId]);
+                committing = true;
+                await db.commit();
+                req.uploadState?.retained.add(req.file.path);
+            } catch (error) {
+                // An acknowledgement failure can hide a successful commit. Retain
+                // the new file for reconciliation rather than break a stored reference.
+                if (committing) req.uploadState?.retained.add(req.file.path);
+                await db.rollback(); throw error;
+            }
+            finally { db.release(); }
+            const oldPath = profilePath(oldReference);
+            if (oldPath && oldPath !== req.file.path) await removeStored(oldPath, roots.image);
+        } else await pool.query(query, [...values, userId]);
         
         res.json({ message: "Profile updated successfully", updatedFields: fields });
     } catch (error) {
@@ -180,6 +204,8 @@ const updateUserProfile = async (req, res) => {
         }
         logError("Error updating user profile:", error);
         res.status(500).json({ message: "Server error updating profile" });
+    } finally {
+        if (req.uploadState) await req.uploadState.finish();
     }
 };
 

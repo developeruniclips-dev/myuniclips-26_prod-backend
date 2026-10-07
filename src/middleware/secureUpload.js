@@ -6,26 +6,6 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 
-// File type magic bytes signatures
-const MAGIC_BYTES = {
-    // Images
-    'jpg': [{ offset: 0, bytes: [0xFF, 0xD8, 0xFF] }],
-    'jpeg': [{ offset: 0, bytes: [0xFF, 0xD8, 0xFF] }],
-    'png': [{ offset: 0, bytes: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] }],
-    'gif': [{ offset: 0, bytes: [0x47, 0x49, 0x46, 0x38] }],
-    'webp': [{ offset: 0, bytes: [0x52, 0x49, 0x46, 0x46] }, { offset: 8, bytes: [0x57, 0x45, 0x42, 0x50] }],
-    
-    // Videos
-    'mp4': [{ offset: 4, bytes: [0x66, 0x74, 0x79, 0x70] }], // ftyp
-    'avi': [{ offset: 0, bytes: [0x52, 0x49, 0x46, 0x46] }],
-    'mov': [{ offset: 4, bytes: [0x66, 0x74, 0x79, 0x70, 0x71, 0x74] }],
-    'webm': [{ offset: 0, bytes: [0x1A, 0x45, 0xDF, 0xA3] }],
-    'mkv': [{ offset: 0, bytes: [0x1A, 0x45, 0xDF, 0xA3] }],
-    
-    // Documents
-    'pdf': [{ offset: 0, bytes: [0x25, 0x50, 0x44, 0x46] }], // %PDF
-};
-
 // Allowed extensions by category
 const ALLOWED_EXTENSIONS = {
     image: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
@@ -91,58 +71,13 @@ const validateMimeType = (mimetype, category) => {
 };
 
 /**
- * Validate file content by checking magic bytes (file signature)
+ * Validate bounded file/container structure; this is not a complete codec decoder.
  * Should be called after file is saved to disk
  * @param {string} filepath - Path to the file
  * @param {string} expectedExt - Expected file extension
  * @returns {Promise<boolean>} Whether the file content matches expected type
  */
-const validateFileContent = async (filepath, expectedExt) => {
-    const ext = expectedExt.toLowerCase().replace('.', '');
-    const signatures = MAGIC_BYTES[ext];
-    
-    if (!signatures) {
-        // If we don't have a signature for this type, allow it (but log warning)
-        console.warn(`No magic byte signature defined for extension: ${ext}`);
-        return true;
-    }
-    
-    return new Promise((resolve, reject) => {
-        const buffer = Buffer.alloc(16);
-        fs.open(filepath, 'r', (err, fd) => {
-            if (err) {
-                reject(err);
-                return;
-            }
-            
-            fs.read(fd, buffer, 0, 16, 0, (err, bytesRead) => {
-                fs.close(fd, () => {});
-                
-                if (err) {
-                    reject(err);
-                    return;
-                }
-                
-                // Check all signatures for this type
-                for (const sig of signatures) {
-                    let matches = true;
-                    for (let i = 0; i < sig.bytes.length; i++) {
-                        if (buffer[sig.offset + i] !== sig.bytes[i]) {
-                            matches = false;
-                            break;
-                        }
-                    }
-                    if (matches) {
-                        resolve(true);
-                        return;
-                    }
-                }
-                
-                resolve(false);
-            });
-        });
-    });
-};
+const { validateFileContent } = require('../utils/uploadContent');
 
 /**
  * Delete a file safely
@@ -154,7 +89,7 @@ const deleteFile = (filepath) => {
             fs.unlinkSync(filepath);
         }
     } catch (err) {
-        console.error('Error deleting file:', err);
+        require('../utils/safeLogging').logError('Upload cleanup failed', err);
     }
 };
 
@@ -174,7 +109,8 @@ const createSecureFileFilter = (category) => {
         }
         
         // Check MIME type
-        if (!validateMimeType(file.mimetype, category)) {
+        const mimeByExtension = { jpg:['image/jpeg'], jpeg:['image/jpeg'], png:['image/png'], gif:['image/gif'], webp:['image/webp'], pdf:['application/pdf'], mp4:['video/mp4'], mov:['video/quicktime'], avi:['video/avi','video/x-msvideo'], mkv:['video/x-matroska'], webm:['video/webm'] };
+        if (!validateMimeType(file.mimetype, category) || !mimeByExtension[path.extname(file.originalname).slice(1).toLowerCase()]?.includes(file.mimetype)) {
             return cb(new Error(`Invalid MIME type. Allowed: ${ALLOWED_MIMES[category].join(', ')}`), false);
         }
         
@@ -208,7 +144,7 @@ const postUploadValidation = (category) => {
             
             next();
         } catch (err) {
-            console.error('Error validating file content:', err);
+            require('../utils/safeLogging').logError('Upload validation failed', err);
             // Delete file on error to be safe
             if (req.file && req.file.path) {
                 deleteFile(req.file.path);

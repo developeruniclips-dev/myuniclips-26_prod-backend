@@ -131,6 +131,7 @@ test('actual db module rejects CA failure before createPool; successful logs con
     let pools = 0; const logs = [];
     const module = { exports: {} };
     const context = { module, console: { log: s => logs.push(s) }, require(name) {
+      if (name === './controller/taskCardController') return { publicUploadBoundary: (_req,_res,next) => next() };
       if (name === 'dotenv') return { config() {} };
       if (name === 'mysql2/promise') return { createPool: () => { pools++; return {}; } };
       if (name === './databaseTls') return { buildPoolConfig: () => buildPoolConfig(production, () => {
@@ -159,6 +160,7 @@ function startupDouble(ready) {
       if (name === './config/db') return { initializeDatabase: () => ready, pool: { end: async () => state.ended++ } };
       if (name === './middleware/apiRateLimiter') return { createApiRateLimiter: () => () => {} };
       if (name === './controller/stripeWebhookController') return { stripeWebhook: () => {} };
+      if (name === './controller/taskCardController') return { publicUploadBoundary: (_req,_res,next) => next() };
       if (name === './utils/safeLogging') return require('../src/utils/safeLogging');
       if (name === 'morgan') return Object.assign(() => () => {}, { token() {} });
       if (['cors', 'helmet', 'express-rate-limit'].includes(name)) return () => () => {};

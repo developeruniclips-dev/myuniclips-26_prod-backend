@@ -5,6 +5,7 @@ const { authMiddleware } = require('../middleware/auth');
 const { authorizeRoles } = require('../middleware/roles');
 const { uploadVideo: uploadMiddleware } = require('../middleware/uploadVideos');
 
+const { videoAdmission } = require('../middleware/uploadAdmission');
 const videoRoutes = Router();
 const content = require('../controller/courseContentController');
 videoRoutes.get('/limits', (req, res) => res.json(require('../config/courseLimits')));
@@ -35,10 +36,8 @@ videoRoutes.post(
   "/",
   authMiddleware,
   authorizeRoles("Scholar"),
-  (req, res, next) => uploadMiddleware.single('video')(req, res, error => {
-    if (error) return res.status(400).json({ message: error.code === 'LIMIT_FILE_SIZE' ? 'Each video must be no larger than 1 GB' : 'Invalid video upload' });
-    next();
-  }),
+  videoAdmission,
+  uploadMiddleware,
   uploadVideo
 );
 videoRoutes.get('/:subjectId', listVideosBySubject);

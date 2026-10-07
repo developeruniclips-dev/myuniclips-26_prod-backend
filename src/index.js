@@ -96,7 +96,7 @@ app.use(
 );
 
 // Serve uploaded files statically with CORS headers
-app.use("/uploads", (req, res, next) => {
+app.use("/uploads", require('./controller/taskCardController').publicUploadBoundary, (req, res, next) => {
   // Set Cross-Origin-Resource-Policy to allow cross-origin requests
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   next();

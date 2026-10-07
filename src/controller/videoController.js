@@ -7,35 +7,49 @@ const { annotateCourses } = require('../utils/generalCourses');
 const { ownedCourse, courseVideos, withCourseLock, validateUpload, validateMetadata, fail } = require('../utils/courseContent');
 
 const uploadVideo = async (req, res) => {
+  if (req.uploadState) req.uploadState.processing = true;
+  let providerCompleted = false;
+  let receipt;
   try {
     if (!req.file) return res.status(400).json({ message: 'No video file received' });
     const { title, description } = validateMetadata(req.body);
-    const scholarId = req.user.id;
-    const subjectId = Number(req.body.subjectId);
-    const result = await withCourseLock(pool, scholarId, subjectId, async db => {
+    const scholarId = req.user.id, subjectId = req.uploadSubjectId;
+    if (req.body.subjectId !== undefined && Number(req.body.subjectId) !== subjectId) fail(400, 'Upload course does not match the authorized target');
+    const sequence = await withCourseLock(pool, scholarId, subjectId, async db => {
       await ownedCourse(db, scholarId, subjectId);
       const videos = await courseVideos(db, scholarId, subjectId);
       validateUpload(videos, req.file.size);
-      const sequence = Math.max(0, ...videos.map(v => Number(v.sequence_index))) + 1;
-      const uri = await new Promise((resolve, reject) => {
-        // Vimeo has its own shorter metadata limits. Store media under a technical label;
-        // retain the complete learner-facing text in UniClips, just as metadata edits do.
-        vimeoClient.upload(req.file.path, { name: `UniClips course ${subjectId} lesson ${sequence}`, description: 'Lesson details are managed in UniClips.', privacy: { view: 'anybody' } },
-          resolve, () => {}, () => reject(new Error('Vimeo upload failed')));
-      });
-      const vimeoId = uri.split('/videos/')[1];
-      const videoUrl = `https://vimeo.com/${vimeoId}`;
-      // Approval may have been revoked by an administrator during a long upload.
-      await ownedCourse(db, scholarId, subjectId);
-      await db.query(`INSERT INTO videos (scholar_user_id, subject_id, title, description, video_url, price, is_free, sequence_index)
-        VALUES (?, ?, ?, ?, ?, 0, 1, ?)`, [scholarId, subjectId, title, description, videoUrl, sequence]);
-      return { videoUrl, vimeoId };
+      return Math.max(0, ...videos.map(v => Number(v.sequence_index))) + 1;
     });
-    res.status(201).json({ message: 'Video uploaded successfully to Vimeo', ...result });
+    // The advisory lock and its connection have been released before provider I/O.
+    receipt = await require('../utils/uploadRecovery').startReceipt(scholarId, subjectId);
+    const uri = await new Promise((resolve, reject) => {
+      vimeoClient.upload(req.file.path, { name: `UniClips upload ${receipt.id} course ${subjectId} lesson ${sequence}`, description: 'Lesson details are managed in UniClips.', privacy: { view: 'anybody' } },
+        resolve, () => {}, () => reject(new Error('Vimeo upload failed')));
+    });
+    providerCompleted = true;
+    if (typeof uri !== 'string' || !/^\/videos\/[0-9]+$/.test(uri)) throw new Error('Invalid provider response');
+    await receipt.completed(uri);
+    const vimeoId = uri.slice('/videos/'.length), videoUrl = `https://vimeo.com/${vimeoId}`;
+    await withCourseLock(pool, scholarId, subjectId, async db => {
+      await ownedCourse(db, scholarId, subjectId);
+      const videos = await courseVideos(db, scholarId, subjectId);
+      validateUpload(videos, req.file.size);
+      const currentSequence = Math.max(0, ...videos.map(v => Number(v.sequence_index))) + 1;
+      await db.query(`INSERT INTO videos (scholar_user_id, subject_id, title, description, video_url, price, is_free, sequence_index)
+        VALUES (?, ?, ?, ?, ?, 0, 1, ?)`, [scholarId, subjectId, title, description, videoUrl, currentSequence]);
+    });
+    await receipt.recorded().catch(error => require('../utils/safeLogging').logError('Upload receipt cleanup failed', error));
+    res.status(201).json({ message: 'Video uploaded successfully to Vimeo', videoUrl, vimeoId });
   } catch (error) {
-    res.status(error.status || 500).json({ message: error.status ? error.message : 'Unable to upload video. Please contact support before retrying if the transfer completed.' });
+    // A completed transfer with failed persistence needs owner reconciliation;
+    // do not retry/delete remote media automatically after an ambiguous DB result.
+    require('../utils/safeLogging').logError(providerCompleted ? 'Video persistence requires reconciliation' : 'Video upload failed', error);
+    const status = providerCompleted ? 503 : error.status || 500;
+    res.status(status).json({ message: providerCompleted ? 'Transfer completed but could not be recorded. Contact support before retrying.' : error.status ? error.message : 'Unable to upload video. Please contact support before retrying if the transfer completed.', ...(receipt ? { uploadReference: receipt.id } : {}) });
   } finally {
-    if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
+    if (req.uploadState) await req.uploadState.finish();
+    else if (req.file?.path) await fs.promises.unlink(req.file.path).catch(() => {});
   }
 };
 
