@@ -12,7 +12,7 @@ function createData(pool) {
             (SELECT COUNT(*) FROM scholar_profile WHERE approved=1) AS scholars,
             (SELECT COUNT(*) FROM scholar_profile WHERE approved=0) AS scholarApplications,
             (SELECT COUNT(*) FROM scholar_subjects WHERE approved=0) AS courseApplications,
-            (SELECT COUNT(*) FROM videos WHERE approved=0) AS videoReviews,
+            (SELECT COUNT(*) FROM course_workflows WHERE state='SUBMITTED_FOR_REVIEW') AS videoReviews,
             (SELECT COUNT(*) FROM videos WHERE approved=1) AS publishedVideos,
             (SELECT COUNT(DISTINCT subject_id,scholar_user_id) FROM videos WHERE approved=1) AS publishedCourses,
             (SELECT COUNT(*) FROM universities) AS academicUniversities,

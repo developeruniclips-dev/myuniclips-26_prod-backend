@@ -1,6 +1,6 @@
 const ops = require('../controller/operationsController');
 const { Router } = require('express');
-const { getAllVideos, getAllVideosAdmin, getVideo, listVideosBySubject, uploadVideo, watchVideo, deleteVideoByScholar, getScholarVideos } = require('../controller/videoController');
+const { getAllVideos, getAllVideosAdmin, getVideo, getLearnerCourse, requireCurrentScholar, listVideosBySubject, uploadVideo, watchVideo, deleteVideoByScholar, getScholarVideos } = require('../controller/videoController');
 const { authMiddleware } = require('../middleware/auth');
 const { authorizeRoles } = require('../middleware/roles');
 const { uploadVideo: uploadMiddleware } = require('../middleware/uploadVideos');
@@ -8,8 +8,10 @@ const { uploadVideo: uploadMiddleware } = require('../middleware/uploadVideos');
 const { videoAdmission } = require('../middleware/uploadAdmission');
 const videoRoutes = Router();
 const content = require('../controller/courseContentController');
+videoRoutes.post('/scholar/courses/:subjectId/submit',authMiddleware,authorizeRoles('Scholar'),require('../controller/videoController').submitCourse);
+videoRoutes.get('/:id/readiness',authMiddleware,require('../controller/videoController').reviewReadiness);
 videoRoutes.get('/limits', (req, res) => res.json(require('../config/courseLimits')));
-videoRoutes.get('/scholar/courses/:subjectId', authMiddleware, authorizeRoles('Scholar'), content.getCourseContent);
+videoRoutes.get('/scholar/courses/:subjectId', authMiddleware, authorizeRoles('Scholar'), requireCurrentScholar, content.getCourseContent);
 videoRoutes.put('/scholar/courses/:subjectId/order', authMiddleware, authorizeRoles('Scholar'), content.reorderCourse);
 videoRoutes.patch('/my/:id', authMiddleware, authorizeRoles('Scholar'), content.editVideo);
 
@@ -31,7 +33,9 @@ videoRoutes.get(
   getScholarVideos
 );
 
-videoRoutes.get('/:id', getVideo);
+videoRoutes.get('/courses/:subjectId/:scholarId', authMiddleware, getLearnerCourse);
+videoRoutes.get('/subject/:subjectId', authMiddleware, listVideosBySubject);
+videoRoutes.get('/:id', authMiddleware, getVideo);
 videoRoutes.post(
   "/",
   authMiddleware,
@@ -40,8 +44,7 @@ videoRoutes.post(
   uploadMiddleware,
   uploadVideo
 );
-videoRoutes.get('/:subjectId', listVideosBySubject);
-videoRoutes.get('/watch/:id', watchVideo);
+videoRoutes.get('/watch/:id', authMiddleware, watchVideo);
 
 // Scholar routes - delete their own videos
 videoRoutes.delete(

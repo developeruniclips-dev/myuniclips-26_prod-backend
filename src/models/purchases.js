@@ -1,4 +1,5 @@
 const { pool } = require("../config/db");
+const {ACTIVE_ENTITLEMENT_SQL,activeEntitlementSql}=require('../services/contentAuthorization');
 
 // Subject bundle price in EUR
 const SUBJECT_BUNDLE_PRICE = 6.00;
@@ -14,7 +15,7 @@ const PurchaseModel = {
     pool.query("SELECT * FROM purchases WHERE buyer_user_id = ? AND video_id = ?", [buyerUserId, videoId]),
 
   findByUser: (buyerUserId) =>
-    pool.query("SELECT p.*, v.title, v.video_url, v.subject_id, v.scholar_user_id AS scholar_id FROM purchases p JOIN videos v ON p.video_id = v.id WHERE p.buyer_user_id = ?", [buyerUserId]),
+    pool.query("SELECT p.*, v.title, v.subject_id, v.scholar_user_id AS scholar_id FROM purchases p JOIN videos v ON p.video_id = v.id WHERE p.buyer_user_id = ?", [buyerUserId]),
 
   savePurchase: (user_id, video_id, amount, transaction_id) => {
     return pool.query(
@@ -44,7 +45,7 @@ const PurchaseModel = {
   hasPurchasedSubject: (buyerUserId, subjectId, scholarId) => {
     return pool.query(
       `SELECT *, 
-        CASE WHEN access_expires_at IS NULL OR access_expires_at > NOW() THEN 1 ELSE 0 END as is_active,
+        CASE WHEN ${ACTIVE_ENTITLEMENT_SQL} THEN 1 ELSE 0 END as is_active,
         DATEDIFF(access_expires_at, NOW()) as days_remaining
        FROM subject_purchases 
        WHERE buyer_user_id = ? AND subject_id = ? AND scholar_id = ?`,
@@ -57,8 +58,7 @@ const PurchaseModel = {
     const [rows] = await pool.query(
       `SELECT id FROM subject_purchases 
        WHERE buyer_user_id = ? AND subject_id = ? AND scholar_id = ?
-       AND (access_expires_at IS NULL OR access_expires_at > NOW())
-       AND is_access_active = 1`,
+       AND ${ACTIVE_ENTITLEMENT_SQL}`,
       [buyerUserId, subjectId, scholarId]
     );
     return rows.length > 0;
@@ -68,7 +68,7 @@ const PurchaseModel = {
   getUserSubjectPurchases: (buyerUserId) => {
     return pool.query(
       `SELECT sp.*, s.name as subject_name, u.fname as scholar_fname, u.lname as scholar_lname,
-        CASE WHEN sp.access_expires_at IS NULL OR sp.access_expires_at > NOW() THEN 1 ELSE 0 END as is_active,
+        CASE WHEN ${activeEntitlementSql('sp')} THEN 1 ELSE 0 END as is_active,
         DATEDIFF(sp.access_expires_at, NOW()) as days_remaining,
         sp.access_expires_at
        FROM subject_purchases sp

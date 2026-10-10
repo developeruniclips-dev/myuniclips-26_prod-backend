@@ -1,31 +1,10 @@
 const {fail,staff,owner,text,id,tx,audit}=require('./common');
 const {withCourseLock}=require('../../utils/courseContent');
 function createActions(pool) {
-    async function approvePendingVideos(actor,offeringId,body) {
-        if(!staff(actor))fail(403,'Administrative access required');
-        if(Object.keys(body).some(key=>!['count','confirmation','subjectId','scholarId','course'].includes(key)))fail(400,'Only the exact offering confirmation is accepted; video sets and price changes are not permitted');
-        const target=id(offeringId),count=id(body.count);
-        const [[context]]=await pool.query('SELECT subject_id,scholar_user_id FROM scholar_subjects WHERE id=?',[target]);
-        if(!context)fail(404,'Course offering not found');
-        if(id(body.subjectId)!==context.subject_id||id(body.scholarId)!==context.scholar_user_id)fail(409,'Course offering context changed. Review the course again.');
-        return withCourseLock(pool,context.scholar_user_id,context.subject_id,async db=>{
-            try {
-                await db.beginTransaction();
-                const [[offering]]=await db.query(`SELECT ss.id,ss.subject_id,ss.scholar_user_id,s.name FROM scholar_subjects ss
-                    JOIN scholar_profile sp ON sp.user_id=ss.scholar_user_id JOIN subjects s ON s.id=ss.subject_id
-                    WHERE ss.id=? AND ss.approved=1 AND sp.approved=1 FOR UPDATE`,[target]);
-                if(!offering||offering.subject_id!==context.subject_id||offering.scholar_user_id!==context.scholar_user_id)fail(409,'Approved Scholar and exact course offering are required');
-                if(body.course!==offering.name||body.confirmation!==`APPROVE ${count} VIDEOS #${target}`)fail(400,'Confirm the pending count and exact course before approval');
-                const [pending]=await db.query('SELECT id,sequence_index FROM videos WHERE subject_id=? AND scholar_user_id=? AND approved=0 ORDER BY sequence_index,id FOR UPDATE',[context.subject_id,context.scholar_user_id]);
-                if(pending.length!==count)fail(409,'The pending count changed. Refresh and review before approving.');
-                await db.query('UPDATE videos SET approved=1 WHERE subject_id=? AND scholar_user_id=? AND approved=0',[context.subject_id,context.scholar_user_id]);
-                await audit(db,actor,'VIDEOS_BULK_APPROVED','courses',target,{subjectId:context.subject_id,scholarId:context.scholar_user_id,course:offering.name,count,videos:pending});
-                await db.commit();return{success:true,approvedCount:count};
-            }catch(e){await db.rollback();throw e;}
-        });
-    }
+    async function approvePendingVideos() { fail(409,'Pending-only approval is unavailable. Review and publish the complete submitted course.'); }
     async function review(actor,kind,target,body) {
         if(!staff(actor))fail(403,'Administrative access required');
+        if(kind==='videos')fail(409,'Use course review to request changes or publish the complete submitted course.');
         const approve=body.decision==='approve';if(!['approve','reject'].includes(body.decision))fail(400,'Choose approve or reject');
         if(!['scholars','courses','videos'].includes(kind))fail(404,'Queue not found');
         const table={scholars:'scholar_profile',courses:'scholar_subjects',videos:'videos'}[kind];

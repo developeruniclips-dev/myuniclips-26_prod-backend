@@ -16,7 +16,7 @@ async function videoAdmission(req,res,next) {
   }
   if(typeof subjectId!=='string'&&typeof subjectId!=='number')return res.status(400).json({message:'Invalid course identifier'});
   req.uploadSubjectId=positiveId(subjectId);
-  await ownedCourse(pool,req.user.id,req.uploadSubjectId);
+  await require('../services/courseWorkflow').editable(pool,req.user.id,req.uploadSubjectId);
   validateUpload(await courseVideos(pool,req.user.id,req.uploadSubjectId),1);
   next();
  } catch(error){if(error.status)return res.status(error.status).json({message:error.message});logError('Upload admission failed',error);res.status(503).json({message:'Unable to verify upload permissions'});}

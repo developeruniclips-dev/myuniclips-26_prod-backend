@@ -9,10 +9,14 @@ for(const d of Object.values(directories))fs.mkdirSync(d);
 let server,base,received=0,holdResponse,holdRelease,mode='success',oldReference='uploads/profile-images/existing.png',heldConnections=0,providerCalls=0;
 const logs=[], state={approved:true,owner:7,currentRole:true,full:false,duplicate:false,dbFailure:false,providerFailure:false,persistenceFailure:false};
 const db={async beginTransaction(){},async commit(){if(state.commitFailure)throw Error('SECRET_DB_ERROR');},async rollback(){},release(){heldConnections--;},async query(sql,args){
+ if(sql.startsWith('INSERT IGNORE INTO course_workflows'))return [{}];
+ if(sql.startsWith('SELECT * FROM course_workflows'))return [[{offering_id:1,state:'DRAFT',revision:0}]];
+ if(sql.startsWith('SELECT COUNT(*) AS n FROM course_workflow_uploads'))return [[{n:0}]];
+ if(/^(INSERT INTO|UPDATE|DELETE FROM) course_workflow/.test(sql))return [{affectedRows:1}];
  if(sql.includes('GET_LOCK'))return [[{acquired:1}]];if(sql.includes('RELEASE_LOCK'))return [[{}]];
  if(sql.startsWith('SELECT r.name'))return [[{name:state.currentRole?'Scholar':'Learner'}]];
  if(sql.startsWith('SELECT ss.subject_id'))return [[{subject_id:5}]];
- if(sql.startsWith('SELECT ss.'))return [state.approved&&Number(args[0])===state.owner&&Number(args[1])===5?[{subject_id:5}]:[]];
+ if(sql.startsWith('SELECT ss.'))return [state.approved&&Number(args[0])===state.owner&&Number(args[1])===5?[{id:1,subject_id:5}]:[]];
  if(sql.startsWith('SELECT * FROM videos'))return [state.full?Array.from({length:12},()=>({sequence_index:1})):[]];
  if(sql.startsWith('INSERT INTO videos')){if(state.persistenceFailure)throw Error('SECRET_DB_ERROR');return [{}];}
  if(sql.startsWith('SELECT profile_image_url'))return [[{profile_image_url:oldReference}]];
@@ -26,7 +30,8 @@ const db={async beginTransaction(){},async commit(){if(state.commitFailure)throw
  throw Error('Unexpected isolated query');
 }};
 const pool={query:db.query.bind(db),async getConnection(){heldConnections++;return db;}};
-const provider={upload(file,options,done,progress,fail){providerCalls++;assert.equal(heldConnections,0,'pool connection held across provider call');if(state.providerFailure)return fail(Error('SECRET_PROVIDER_ERROR'));if(state.providerDelay){holdRelease=()=>done('/videos/123');return;}done('/videos/123');}};
+const providerAdapter=require('./fixtures/vimeoPolicy').syntheticVimeo({beforeRequest(){assert.equal(heldConnections,0);}});
+const provider={...providerAdapter,upload(file,options,done,progress,fail){assert.equal(JSON.stringify(options.privacy),JSON.stringify({view:'nobody',embed:'private',download:false}));providerAdapter.uploaded('/videos/123',options);providerCalls++;assert.equal(heldConnections,0,'pool connection held across provider call');if(state.providerFailure)return fail(Error('SECRET_PROVIDER_ERROR'));if(state.providerDelay){holdRelease=()=>done('/videos/123');return;}done('/videos/123');}};
 function load(file,overrides){const module={exports:{}};const localRequire=require('node:module').createRequire(path.join(__dirname,'../src',file));vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../src',file),'utf8'),{module,Buffer,Date,Set,Number,Promise,console,__dirname:path.dirname(path.join(__dirname,'../src',file)),process:{env:{}},require(name){if(Object.hasOwn(overrides,name))return overrides[name];if(name.includes('safeLogging'))return{logError:(event)=>logs.push(event)};return localRequire(name);}});return module.exports;}
 const localSecurity={...security,roots:{image:directories.image,taskCard:directories.taskCard,video:directories.video},profilePath(ref){if(!/^uploads\/profile-images\/[\w-]+\.png$/.test(ref||''))return null;return path.join(directories.image,path.basename(ref));}};
 const user=load('controller/userController.js',{'../config/db':{pool},'../models/User':{UserModel:{}},'../utils/learnerPreferences':{learnerPreferences:async()=>{if(state.preferenceFailure)throw Object.assign(Error('Invalid study preference'),{statusCode:400});return{};}},'../middleware/uploadSecurity':localSecurity});

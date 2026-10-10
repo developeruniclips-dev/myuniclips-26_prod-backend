@@ -16,6 +16,10 @@ for(const kind of ['support','escalations']){
     router.post(`/${kind}/:id/messages`,...guards,c.handler(req=>c.cases.message(req.actor,kind,req.params.id,req.body)));
 }
 router.use(adminIPWhitelist,c.requireStaff);
+const courseWorkflow=require('../controller/courseWorkflowController');
+router.get('/course-workflows',courseWorkflow.list);
+router.get('/course-workflows/:id',courseWorkflow.detail);
+router.post('/course-workflows/:id/:action',courseWorkflow.transition);
 router.get('/overview',c.handler(()=>c.data.overview()));
 router.get('/people',c.handler(req=>c.data.people(req.query)));
 router.get('/people/:id',c.handler(req=>c.data.person(req.params.id,req.query.section,req.query)));

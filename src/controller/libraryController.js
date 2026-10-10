@@ -1,5 +1,7 @@
 const { pool } = require('../config/db');
 const { annotateCourses } = require('../utils/generalCourses');
+const access=require('../services/contentAuthorization').createContentAuthorization(pool);
+const safeFailure=(res,error)=>{require('../utils/safeLogging').logError('Library content request failed',error);return res.status(error.status||503).json({message:error.status?error.message:'Library is temporarily unavailable'});};
 
 // Add course to library
 const addToLibrary = async (req, res) => {
@@ -10,6 +12,7 @@ const addToLibrary = async (req, res) => {
     if (!subjectId || !scholarId) {
       return res.status(400).json({ message: 'Subject ID and Scholar ID are required' });
     }
+    await access.course(req.user,subjectId,scholarId);
 
     await pool.query(
       `INSERT INTO user_library (user_id, subject_id, scholar_id) VALUES (?, ?, ?)
@@ -19,8 +22,7 @@ const addToLibrary = async (req, res) => {
 
     res.status(200).json({ message: 'Course added to library', success: true });
   } catch (error) {
-    console.error('Error adding to library:', error);
-    res.status(500).json({ message: 'Failed to add course to library' });
+    safeFailure(res,error);
   }
 };
 
@@ -63,7 +65,9 @@ const getMyLibrary = async (req, res) => {
       JOIN subjects s ON ul.subject_id = s.id
       JOIN users u ON ul.scholar_id = u.id
       LEFT JOIN scholar_profile sp ON ul.scholar_id = sp.user_id
-      WHERE ul.user_id = ?
+      JOIN scholar_subjects ss ON ss.subject_id=ul.subject_id AND ss.scholar_user_id=ul.scholar_id
+      JOIN course_workflows cw ON cw.offering_id=ss.id AND cw.state='PUBLISHED'
+      WHERE ul.user_id = ? AND sp.approved=1 AND ss.approved=1
       ORDER BY ul.added_at DESC
     `, [userId]);
 
@@ -71,7 +75,8 @@ const getMyLibrary = async (req, res) => {
     const libraryWithProgress = await Promise.all(library.map(async (course) => {
       // Get all videos for this course
       const [videos] = await pool.query(`
-        SELECT v.id, v.title, v.is_free, v.price, v.video_url
+        SELECT v.id, v.title, v.price, v.sequence_index,
+          v.id=(SELECT first.id FROM videos first WHERE first.subject_id=v.subject_id AND first.scholar_user_id=v.scholar_user_id ORDER BY first.sequence_index,first.id LIMIT 1) AS is_free
         FROM videos v
         WHERE v.subject_id = ? AND v.scholar_user_id = ? AND v.approved = 1
         ORDER BY v.sequence_index
@@ -92,14 +97,7 @@ const getMyLibrary = async (req, res) => {
       const progressPercent = totalVideos > 0 ? Math.round((watchedVideos / totalVideos) * 100) : 0;
 
       // Get first video thumbnail
-      const firstVideo = videos[0];
-      let thumbnailUrl = 'https://via.placeholder.com/640x360?text=Course';
-      if (firstVideo && firstVideo.video_url) {
-        const match = firstVideo.video_url.match(/vimeo\.com\/(\d+)/);
-        if (match) {
-          thumbnailUrl = `https://vumbnail.com/${match[1]}.jpg`;
-        }
-      }
+      const thumbnailUrl = '/course-fallback.svg';
 
       return {
         ...course,
@@ -116,8 +114,7 @@ const getMyLibrary = async (req, res) => {
 
     res.status(200).json({ library: await annotateCourses(pool, libraryWithProgress) });
   } catch (error) {
-    console.error('Error getting library:', error);
-    res.status(500).json({ message: 'Failed to get library' });
+    safeFailure(res,error);
   }
 };
 
@@ -144,6 +141,7 @@ const markVideoWatched = async (req, res) => {
   try {
     const userId = req.user.id;
     const { videoId } = req.body;
+    await access.playback(req.user,videoId);
 
     await pool.query(
       `INSERT INTO video_progress (user_id, video_id, watched, watched_at)
@@ -154,8 +152,7 @@ const markVideoWatched = async (req, res) => {
 
     res.status(200).json({ message: 'Video marked as watched', success: true });
   } catch (error) {
-    console.error('Error marking video watched:', error);
-    res.status(500).json({ message: 'Failed to mark video as watched' });
+    safeFailure(res,error);
   }
 };
 
@@ -166,6 +163,7 @@ const getCourseProgress = async (req, res) => {
     const { subjectId, scholarId } = req.query;
 
     // Get all videos for this course
+    await access.course(req.user,subjectId,scholarId);
     const [videos] = await pool.query(`
       SELECT id FROM videos
       WHERE subject_id = ? AND scholar_user_id = ? AND approved = 1
@@ -192,8 +190,7 @@ const getCourseProgress = async (req, res) => {
       progressPercent
     });
   } catch (error) {
-    console.error('Error getting course progress:', error);
-    res.status(500).json({ message: 'Failed to get course progress' });
+    safeFailure(res,error);
   }
 };
 
@@ -206,6 +203,8 @@ const saveVideoProgress = async (req, res) => {
     if (!videoId || progressSeconds === undefined) {
       return res.status(400).json({ message: 'Video ID and progress seconds are required' });
     }
+    if(!Number.isSafeInteger(progressSeconds)||progressSeconds<0||progressSeconds>86400)return res.status(400).json({message:'Invalid playback progress'});
+    await access.playback(req.user,videoId);
 
     await pool.query(
       `INSERT INTO video_progress (user_id, video_id, progress_seconds, watched_at)
@@ -216,8 +215,7 @@ const saveVideoProgress = async (req, res) => {
 
     res.status(200).json({ message: 'Progress saved', success: true });
   } catch (error) {
-    console.error('Error saving video progress:', error);
-    res.status(500).json({ message: 'Failed to save video progress' });
+    safeFailure(res,error);
   }
 };
 
@@ -230,6 +228,7 @@ const getVideoProgress = async (req, res) => {
     if (!videoId) {
       return res.status(400).json({ message: 'Video ID is required' });
     }
+    await access.playback(req.user,videoId);
 
     const [rows] = await pool.query(
       `SELECT progress_seconds, watched FROM video_progress WHERE user_id = ? AND video_id = ?`,
@@ -245,8 +244,7 @@ const getVideoProgress = async (req, res) => {
       watched: rows[0].watched || false
     });
   } catch (error) {
-    console.error('Error getting video progress:', error);
-    res.status(500).json({ message: 'Failed to get video progress' });
+    safeFailure(res,error);
   }
 };
 

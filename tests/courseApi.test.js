@@ -13,7 +13,11 @@ const connection = {
     query: async (sql, args = []) => {
         if (sql.startsWith('SELECT r.name FROM user_roles')) return [[{name:'Scholar'}]];
         if (sql.startsWith('SELECT ss.subject_id')) return [[{subject_id:5}]];
-        if (sql.includes('GET_LOCK')) return [[{ acquired: 1 }]];
+        if(sql.startsWith('INSERT IGNORE INTO course_workflows'))return [{}];
+ if(sql.startsWith('SELECT * FROM course_workflows'))return [[{offering_id:1,state:'DRAFT',revision:0}]];
+ if(sql.startsWith('SELECT COUNT(*) AS n FROM course_workflow_uploads'))return [[{n:0}]];
+ if(/^(INSERT INTO|UPDATE|DELETE FROM) course_workflow/.test(sql))return [{affectedRows:1}];
+ if (sql.includes('GET_LOCK')) return [[{ acquired: 1 }]];
         if (sql.includes('RELEASE_LOCK')) return [[{ released: 1 }]];
         if (sql.includes('AS refresh_valid')) return [[fixtureUser(Number(args[0]))]];
         if (sql.startsWith('UPDATE users')) return [{ affectedRows: 1 }];
@@ -37,7 +41,8 @@ const connection = {
 const dbPath = require.resolve('../src/config/db');
 require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: { pool: { ...connection, getConnection: async () => connection } } };
 const vimeoPath = require.resolve('../src/config/vimeo');
-require.cache[vimeoPath] = { id: vimeoPath, filename: vimeoPath, loaded: true, exports: { upload(file, options, done) { uploadCalls++; providerMetadata = options; done('/videos/123456'); } } };
+const providerAdapter = require('./fixtures/vimeoPolicy').syntheticVimeo();
+require.cache[vimeoPath] = { id: vimeoPath, filename: vimeoPath, loaded: true, exports: { ...providerAdapter, upload(file, options, done) { uploadCalls++; providerMetadata = options; providerAdapter.uploaded('/videos/123456', options); done('/videos/123456'); } } };
 const app = express(); app.use('/videos/my/:id', express.json({ limit: '256kb' })); app.use(express.json()); app.use('/videos', require('../src/routes/videoRoutes'));
 let server, base;
 test.before(async () => { server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); }); base = `http://127.0.0.1:${server.address().port}`; });

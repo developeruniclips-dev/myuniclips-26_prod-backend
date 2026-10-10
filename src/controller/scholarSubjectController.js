@@ -95,10 +95,17 @@ const deleteSubjectByScholar = async(req, res) => {
         const [[subject]] = await pool.query('SELECT subject_id FROM scholar_subjects WHERE id = ?', [id]);
         const { withCourseLock, fail } = require('../utils/courseContent');
         await withCourseLock(pool, scholarId, subject.subject_id, async db => {
+            const wf=require('../services/courseWorkflow');
+            const state=await wf.workflow(db,id);
+            if(!wf.EDITABLE.has(state.state))fail(409,'This course is locked for review or publication');
+            await wf.noUploads(db,id);
             const [[content]] = await db.query('SELECT COUNT(*) AS count FROM videos WHERE subject_id = ? AND scholar_user_id = ?', [subject.subject_id, scholarId]);
             const [[sales]] = await db.query('SELECT COUNT(*) AS count FROM subject_purchases WHERE subject_id = ? AND scholar_id = ?', [subject.subject_id, scholarId]);
             if (Number(content.count) || Number(sales.count)) fail(409, 'Courses with content or historical sales cannot be deleted here. Manage unapproved lessons individually.');
+            await db.beginTransaction();try{
+            await db.query('DELETE FROM course_workflows WHERE offering_id=?',[id]);
             await db.query('DELETE FROM scholar_subjects WHERE id = ? AND scholar_user_id = ?', [id, scholarId]);
+            await db.commit();}catch(error){await db.rollback();throw error;}
         });
 
         res.json({ message: "Empty course application removed" });

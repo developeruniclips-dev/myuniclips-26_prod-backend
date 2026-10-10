@@ -29,6 +29,7 @@ const VideoModel = {
   getAllVideos: () => pool.query(`
     SELECT 
       v.*, 
+      v.id=(SELECT first.id FROM videos first WHERE first.subject_id=v.subject_id AND first.scholar_user_id=v.scholar_user_id ORDER BY first.sequence_index,first.id LIMIT 1) AS is_first_preview,
       u.fname AS scholar_fname, 
       u.lname AS scholar_lname, 
       s.name AS subject_name,
@@ -43,7 +44,8 @@ const VideoModel = {
     JOIN subjects s ON v.subject_id = s.id 
     LEFT JOIN scholar_profile sp ON v.scholar_user_id = sp.user_id
     LEFT JOIN scholar_subjects ss ON v.subject_id = ss.subject_id AND v.scholar_user_id = ss.scholar_user_id
-    WHERE v.approved = 1
+    JOIN course_workflows cw ON cw.offering_id=ss.id AND cw.state='PUBLISHED'
+    WHERE v.approved = 1 AND sp.approved = 1 AND ss.approved = 1
     ORDER BY v.created_at DESC
   `),
 

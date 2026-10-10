@@ -39,11 +39,13 @@ const ScholarSubjectModel = {
                 ss.degree, 
                 ss.expertise, 
                 ss.approved,
+                COALESCE(cw.state,'DRAFT') AS workflow_state,
                 s.bundle_price,
                 COALESCE(sp_stats.sales_count, 0) as sales_count,
                 COALESCE(sp_stats.total_revenue, 0) as total_revenue
             FROM scholar_subjects ss
             LEFT JOIN subjects s ON ss.subject_id = s.id
+            LEFT JOIN course_workflows cw ON cw.offering_id=ss.id
             LEFT JOIN (
                 SELECT subject_id, scholar_id, COUNT(*) as sales_count, SUM(amount) as total_revenue
                 FROM subject_purchases

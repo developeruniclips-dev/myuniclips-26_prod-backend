@@ -35,7 +35,7 @@ async function ownedCourse(db, scholarId, subjectId) {
         JOIN subjects s ON s.id = ss.subject_id
         WHERE ss.scholar_user_id = ? AND ss.subject_id = ? AND ss.approved = 1 AND sp.approved = 1`,
     [scholarId, positiveId(subjectId)]);
-    if (!rows.length) fail(403, 'An approved course application belonging to you is required');
+    if (rows.length !== 1) fail(403, 'An unambiguous approved course application belonging to you is required');
     return rows[0];
 }
 async function courseVideos(db, scholarId, subjectId) {
@@ -58,7 +58,7 @@ async function withCourseLock(pool, scholarId, subjectId, work) {
     }
 }
 async function reorder(db, scholarId, subjectId, ids) {
-    await ownedCourse(db, scholarId, subjectId);
+    const {offering}=await require('../services/courseWorkflow').editable(db,scholarId,subjectId);
     const videos = await courseVideos(db, scholarId, subjectId);
     const order = validateOrder(videos, ids);
     await db.beginTransaction();
@@ -68,6 +68,7 @@ async function reorder(db, scholarId, subjectId, ids) {
         for (let i = 0; i < order.length; i++) {
             await db.query('UPDATE videos SET sequence_index = ? WHERE id = ? AND scholar_user_id = ? AND subject_id = ?', [i + 1, order[i], scholarId, subjectId]);
         }
+        await require('../services/courseWorkflow').touch(db,offering.id);
         await db.commit();
     } catch (error) { await db.rollback(); throw error; }
 }
