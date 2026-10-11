@@ -21,7 +21,7 @@ const reviewReadiness=async(req,res)=>{try{
 }catch(error){contentError(res,error);}};
 const contentError=(res,error)=>{
   require('../utils/safeLogging').logError('Content request denied or unavailable',error);
-  return res.status(error.status||503).json({message:error.status?error.message:'Content is temporarily unavailable'});
+  return res.status(error.status||503).json({message:error.status?error.message:'Content is temporarily unavailable',...(/^LESSON_(?:PROCESSING|PROCESSING_FAILED|SECURITY_CHECK_FAILED|SECURITY_VERIFICATION_UNAVAILABLE|READINESS_UNAVAILABLE)$/.test(error.code||'')&&Number.isSafeInteger(error.lessonId)?{code:error.code,lessonId:error.lessonId,readinessState:error.readinessState}:{})});
 };
 const getLearnerCourse=async(req,res)=>{
   try{res.json(await contentAccess.course(req.user,req.params.subjectId,req.params.scholarId));}

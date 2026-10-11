@@ -28,7 +28,7 @@ test.before(async()=>{
  ])await actual.query(sql);
  await actual.query("INSERT INTO roles VALUES(1,'Learner'),(2,'Admin'),(3,'SuperAdmin'),(4,'Scholar')");for(const id of [1,3,4,7,8]){await actual.query("INSERT INTO users VALUES(?, 'SYNTHETIC_HASH',?,DATE_ADD(NOW(),INTERVAL 1 DAY),NOW(),NULL,0,NULL,'Synthetic','User')",[id,'sha256:'+'1'.repeat(64)]);await actual.query('INSERT INTO user_roles VALUES(?,?)',[id,id===3?2:id===4?3:id>=7?4:1]);}
  await actual.query("INSERT INTO subjects VALUES(10,'Synthetic course',6),(20,'Other course',6)");await actual.query('INSERT INTO scholar_profile VALUES(7,1),(8,1)');await actual.query('INSERT INTO scholar_subjects VALUES(1,10,7,1),(2,20,8,1)');
- for(const sql of fs.readFileSync(path.join(__dirname,'../src/migrations/course_workflow_proposal.sql'),'utf8').split(';').map(x=>x.replace(/--[^\n]*/g,'').trim()).filter(Boolean))await actual.query(sql);
+ for(const sql of require('./fixtures/courseWorkflowSchema.cjs').split(';').map(x=>x.replace(/--[^\n]*/g,'').trim()).filter(Boolean))await actual.query(sql);
  pool=instrument(actual);inject('../src/config/db',{pool});providerAdapter=require('./fixtures/vimeoPolicy').syntheticVimeo({beforeRequest(){assert.equal(connections,0);},state:()=>providerMode});inject('../src/config/vimeo',{...providerAdapter,upload(file,opts,done){assert.equal(connections,0);assert.deepEqual(opts.privacy,{view:'nobody',embed:'private',download:false});providerAdapter.uploaded('/videos/900999',opts);done('/videos/900999');}});
  service=require('../src/services/courseWorkflow').createCourseWorkflow(pool,readiness);
  const app=express();app.use(express.json());app.use('/videos',require('../src/routes/videoRoutes'));app.use('/operations',require('../src/routes/operationsRoutes'));server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));base='http://127.0.0.1:'+server.address().port;
@@ -91,4 +91,50 @@ test('legacy Published state and approvals are preserved when policy drift block
  const before=(await actual.query('SELECT id,approved,video_url FROM videos ORDER BY id'))[0];providerMode={public:true};
  assert.equal((await http('/videos/101',1)).status,503);assert.equal((await state()).state,'PUBLISHED');assert.equal((await state()).legacy_published,1);
  assert.deepEqual((await actual.query('SELECT id,approved,video_url FROM videos ORDER BY id'))[0],before);
+});
+
+test('one ready lesson may submit; staff judge sufficiency, request changes, and the owner corrects/resubmits',async()=>{
+ await actual.query('DELETE FROM videos WHERE id=102');
+ assert.equal((await http('/operations/course-workflows?state=SUBMITTED_FOR_REVIEW',3)).body.rows.length,0);
+ assert.equal((await http('/videos/scholar/courses/10/submit',7,'POST',{})).status,200);
+ const detail=await http('/operations/course-workflows/1',3);
+ assert.equal(detail.status,200);assert.equal(detail.body.offeringId,1);assert.equal(detail.body.courseName,'Synthetic course');assert.equal(detail.body.workflow.state,'SUBMITTED_FOR_REVIEW');assert.equal(detail.body.videos.length,1);
+ assert.equal((await http('/operations/course-workflows?state=SUBMITTED_FOR_REVIEW',3)).body.rows[0].id,1);
+ assert.equal((await http('/operations/course-workflows/1/request-changes',8,'POST',{reason:'Please add the planned remaining lessons.'})).status,403);
+ assert.equal((await http('/operations/course-workflows/1/request-changes',3,'POST',{reason:'Please add the planned remaining lessons.'})).status,200);
+ const scholar=await http('/videos/scholar/courses/10',7);
+ assert.equal(scholar.body.workflow.state,'CHANGES_REQUESTED');assert.equal(scholar.body.editable,true);assert.equal(scholar.body.workflow.feedback,'Please add the planned remaining lessons.');
+ assert.equal((await http('/videos/my/101',8,'PATCH',{title:'Unauthorized',description:''})).status,403);
+ assert.equal((await http('/videos/my/101',7,'PATCH',{title:'Clarified introduction',description:'Agreed correction.'})).status,200);
+ assert.equal((await state()).state,'CHANGES_REQUESTED');
+ assert.equal((await http('/videos/scholar/courses/10/submit',7,'POST',{})).status,200);
+ assert.equal((await state()).state,'SUBMITTED_FOR_REVIEW');assert.equal((await http('/videos/my/101',7,'PATCH',{title:'Too late',description:''})).status,409);
+ assert.equal((await http('/operations/course-workflows/1',1)).status,403);
+ assert.equal((await http('/operations/course-workflows/1',8)).status,403);
+});
+test('completed quarantined media cannot submit: safe lesson-specific security error and no mutation/retry',async()=>{
+ await actual.query('DELETE FROM videos WHERE id=102');
+ const asset=providerAdapter.asset(900101);asset.privacy={view:'nobody',embed:'private',download:false};asset.domains=[];
+ const before=(await actual.query('SELECT * FROM videos'))[0],callStart=providerAdapter.calls.length;
+ const r=await http('/videos/scholar/courses/10/submit',7,'POST',{minimumLessons:1,skipReadiness:true});
+ assert.equal(r.status,409);assert.equal(r.body.code,'LESSON_SECURITY_CHECK_FAILED');assert.equal(r.body.lessonId,101);assert.equal(r.body.readinessState,'UNKNOWN');
+ assert.match(r.body.message,/Lesson 101/);assert.doesNotMatch(JSON.stringify(r.body),/900101|vimeo|secret|player_url|access_token/);
+ assert.equal((await state()).state,'DRAFT');assert.equal((await state()).revision,0);
+ assert.deepEqual((await actual.query('SELECT * FROM videos'))[0],before);
+ assert.equal(providerAdapter.calls.slice(callStart).filter(c=>c.path.includes('/videos/900101?')).length,1);
+ assert.ok(providerAdapter.calls.slice(callStart).every(c=>c.method==='GET'));
+});
+test('safe errors distinguish processing, failed processing, uncertified READY and unavailable verification',async()=>{
+ const cases=[
+ [{state:'PROCESSING',policyVerified:false},'LESSON_PROCESSING'],
+ [{state:'FAILED',policyVerified:true},'LESSON_PROCESSING_FAILED'],
+ [{state:'READY',policyVerified:false},'LESSON_SECURITY_CHECK_FAILED'],
+ [{state:'UNKNOWN',policyVerified:false,code:'PROVIDER_PERMISSION'},'LESSON_SECURITY_VERIFICATION_UNAVAILABLE'],
+ [{state:'UNKNOWN',policyVerified:false,code:'PRIVATE_PROVIDER_SECRET'},'LESSON_READINESS_UNAVAILABLE']
+ ];
+ for(const [result,code] of cases){
+ const isolated=require('../src/services/courseWorkflow').createCourseWorkflow(pool,{async read(){return result;}});
+ await assert.rejects(isolated.transition(actor(7),1,'submit'),e=>e.status===409&&e.code===code&&e.lessonId===101&&!/PRIVATE_PROVIDER_SECRET/.test(e.message));
+ assert.equal((await state()).state,'DRAFT');assert.equal((await state()).revision,0);
+ }
 });
