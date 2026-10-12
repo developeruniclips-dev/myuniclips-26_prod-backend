@@ -146,9 +146,9 @@ test('actual db module rejects CA failure before createPool; successful logs con
   }
 });
 
-function startupDouble(ready) {
-  const state = { listens: 0, ended: 0, logs: [] }, processDouble = { env: { NODE_ENV: 'production' } };
-  const app = { set() {}, use() {}, post() {}, get() {}, listen(port, callback) { state.listens++; callback(); } };
+function startupDouble(ready, operatorReady=Promise.resolve({close:async()=>{}})) {
+  const state = { listens: 0, ended: 0, logs: [] }, processDouble = new (require('node:events').EventEmitter)(); processDouble.env={ NODE_ENV: 'production' }; let shutdown;
+  const app = { set() {}, use() {}, post() {}, get() {}, listen(port, callback) { state.listens++; callback(); return {close:fn=>fn()}; } };
   const express = () => app; for (const key of ['raw', 'json', 'static']) express[key] = () => () => {};
   const module = { exports: {} };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/index.js'), 'utf8'), {
@@ -157,6 +157,9 @@ function startupDouble(ready) {
       if (name === 'dotenv') return { config() {} };
       if (name === 'path') return path;
       if (name === 'fs') return { existsSync: () => true, createWriteStream: () => ({}) };
+      if (name === './utils/uploadBarrier') return { shared: require('../src/utils/uploadBarrier').createUploadBarrier() };
+      if (name === './utils/gracefulShutdown') return {createGracefulShutdown:args=>(shutdown=require('../src/utils/gracefulShutdown').createGracefulShutdown({...args,signals:processDouble,report:()=>{}}))};
+      if (name === './utils/uploadOperator') return { startUploadOperator: () => operatorReady };
       if (name === './config/db') return { initializeDatabase: () => ready, pool: { end: async () => state.ended++ } };
       if (name === './middleware/apiRateLimiter') return { createApiRateLimiter: () => () => {} };
       if (name === './controller/stripeWebhookController') return { stripeWebhook: () => {} };
@@ -168,7 +171,7 @@ function startupDouble(ready) {
       throw Error('Unexpected dependency');
     }
   });
-  return { state, processDouble, startup: module.exports.startup };
+  return { state, processDouble, startup: module.exports.startup, get shutdown(){return shutdown;} };
 }
 
 test('HTTP does not listen before verified DB readiness; failure closes pool and exits unsuccessfully', async () => {
@@ -179,3 +182,16 @@ test('HTTP does not listen before verified DB readiness; failure closes pool and
   assert.equal(bad.state.listens, 0); assert.equal(bad.state.ended, 1); assert.equal(bad.processDouble.exitCode, 1);
   assert.deepEqual(bad.state.logs, ['Database initialization failed; server not started']);
 });
+
+test('HTTP also waits for operator socket readiness and refuses operator startup failure', async () => {
+ let resolve;const socketReady=new Promise(r=>resolve=r),good=startupDouble(Promise.resolve(),socketReady);
+ await Promise.resolve();await Promise.resolve();assert.equal(good.state.listens,0);
+ resolve({close:async()=>{}});await good.startup;assert.equal(good.state.listens,1);
+ let fail;const socketFailed=new Promise((_,r)=>fail=r),bad=startupDouble(Promise.resolve(),socketFailed);
+ await Promise.resolve();fail(Error('synthetic socket failure'));await bad.startup;
+ assert.equal(bad.state.listens,0);assert.equal(bad.state.ended,1);assert.equal(bad.processDouble.exitCode,1);
+ assert.deepEqual(bad.state.logs,['Database initialization failed; server not started']);
+});
+
+test('actual startup integration honors SIGTERM before TLS readiness without opening HTTP',async()=>{let resolve;const d=startupDouble(new Promise(r=>resolve=r));d.processDouble.emit('SIGTERM');resolve();await d.startup;await d.shutdown.begin();assert.equal(d.state.listens,0);assert.equal(d.state.ended,1);});
+test('actual startup integration closes a late operator on SIGTERM without opening HTTP',async()=>{let resolve,closed=0;const d=startupDouble(Promise.resolve(),new Promise(r=>resolve=r));await Promise.resolve();d.processDouble.emit('SIGTERM');resolve({close:async()=>closed++});await d.startup;await d.shutdown.begin();assert.equal(d.state.listens,0);assert.equal(closed,1);assert.equal(d.state.ended,1);});

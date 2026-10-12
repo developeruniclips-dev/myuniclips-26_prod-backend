@@ -1,3 +1,5 @@
+// Explicitly open only this isolated test process; production boots paused.
+require('../src/utils/uploadBarrier').shared.resume();
 // Real Express routes/authentication over loopback; isolated SQL/Vimeo adapters.
 // No .env is loaded and no configured database/Vimeo account is contacted.
 const test = require('node:test');

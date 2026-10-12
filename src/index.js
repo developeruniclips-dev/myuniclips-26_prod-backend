@@ -9,12 +9,17 @@ const morgan = require("morgan");
 const fs = require("fs");
 const { requestLogger, logError } = require('./utils/safeLogging');
 const { pool, initializeDatabase } = require('./config/db');
+const {shared:uploadBarrier}=require('./utils/uploadBarrier');
+const {startUploadOperator}=require('./utils/uploadOperator');
+const {createGracefulShutdown}=require('./utils/gracefulShutdown');
+const shutdown=createGracefulShutdown({barrier:uploadBarrier,pool});
 
 const router = require("./routes");
 const purchaseRoutes = require("./routes/purchaseRoutes");
 const { stripeWebhook } = require("./controller/stripeWebhookController");
 
 const app = express();
+app.use(shutdown.admit);
 
 // Trust first proxy (Render uses reverse proxy) - required for rate limiting to work correctly
 app.set('trust proxy', 1);
@@ -138,16 +143,26 @@ app.use((req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
-const startup = initializeDatabase().then(() => app.listen(PORT, () => {
+let uploadOperator;
+shutdown.instrument(app);
+const startup = initializeDatabase().then(async () => {
+ if(shutdown.stopping){shutdown.ready();return;}
+ uploadOperator=await startUploadOperator(uploadBarrier);
+ if(shutdown.stopping){shutdown.ready(undefined,uploadOperator);return;}
+ const server=app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
   console.log(`📁 Uploads stored locally in: ${path.join(__dirname, "../uploads")}`);
   console.log(`🔒 Security: Helmet.js enabled, Rate limiting active`);
 
   // Schema changes belong to separately authorized, explicit migration scripts.
-})).catch(async () => {
+ });
+ shutdown.ready(server,uploadOperator);
+ return server;
+}).catch(async () => {
   console.error('Database initialization failed; server not started');
-  try { await pool.end(); } catch { /* Do not expose a raw driver cleanup error. */ }
   process.exitCode = 1;
+  shutdown.ready(undefined,uploadOperator);
+  await shutdown.begin();
 });
 
 module.exports = { app, authLimiter, startup };

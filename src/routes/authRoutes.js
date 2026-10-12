@@ -16,6 +16,7 @@ const authLimiter = rateLimit({
 });
 
 const uploadTaskCard = createUpload('taskCard');
+const {shared:uploadBarrier}=require('../utils/uploadBarrier');
 
 const authRouter = Router();
 
@@ -25,7 +26,7 @@ authRouter.get('/test', (req, res) => res.json({ message: 'Auth routes working!'
 // Apply rate limiting and validation to sensitive auth endpoints
 authRouter.post('/', authLimiter, registerValidation, userRegister);
 authRouter.post('/login', authLimiter, loginValidation, login);
-authRouter.post('/become-scholar', authMiddleware, applicantAdmission, uploadTaskCard, becomeScholar);
+authRouter.post('/become-scholar', uploadBarrier.ingress('taskCard',{multipartOnly:true}), ...[authMiddleware,applicantAdmission,uploadTaskCard,becomeScholar].map(uploadBarrier.wrap));
 
 // Token refresh and logout
 authRouter.post('/refresh-token', authLimiter, refreshAccessToken);

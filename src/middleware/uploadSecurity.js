@@ -1,6 +1,7 @@
 // Upload-only admission, storage and lifecycle controls. No distributed queue/store.
 const fs = require('node:fs'), path = require('node:path');
 const multer = require('multer');
+const {shared:uploadBarrier,ticketKey}=require('../utils/uploadBarrier');
 const { generateSecureFilename, createSecureFileFilter, validateFileContent } = require('./secureUpload');
 const { logError } = require('../utils/safeLogging');
 const roots = Object.freeze({ image: path.resolve(__dirname, '../../uploads/profile-images'), taskCard: path.resolve(__dirname, '../../private-uploads/task-cards'), video: path.resolve(__dirname, '../../private-uploads/videos') });
@@ -29,7 +30,7 @@ function profilePath(reference) {
  if(typeof reference!=='string'||!/^uploads\/profile-images\/[A-Za-z0-9_-]+\.(?:jpg|jpeg|png|gif|webp)$/i.test(reference))return null;
  return path.join(roots.image,reference.split('/').at(-1));
 }
-function createUpload(category, { root=roots[category], beforeFile, admission=admissions[category] }={}) {
+function createUpload(category, { root=roots[category], beforeFile, admission=admissions[category], barrier=uploadBarrier }={}) {
  const p=policies[category];
  const limits={files:1,fields:p.fields.length,parts:p.fields.length+1,fileSize:p.fileSize,fieldSize:p.fieldSize,fieldNameSize:64,fieldNestingDepth:0,fieldArrayIndexLimit:0};
  const storage=multer.diskStorage({
@@ -46,13 +47,17 @@ function createUpload(category, { root=roots[category], beforeFile, admission=ad
   req.on('data',bytes=>{received+=bytes.length;if(received>p.fileSize+p.fields.length*p.fieldSize+65536) req.uploadState.rejectTransport(413,'Upload exceeds the request size limit');});
   req.pipe(busboy);
  }}).single(p.field);
- return function boundedUpload(req,res,next) {
+ const ingress=barrier.ingress(category,{multipartOnly:true});
+ function boundedUpload(req,res,next) {
   // JSON profile/application requests remain supported; file budgets apply to multipart.
   if(!/^multipart\/form-data(?:;|$)/i.test(req.headers['content-type']||''))return next();
+  if(req.aborted||res.destroyed)return;
   const release=admission(String(req.user?.id));
   if(!release)return res.status(429).json({message:'An upload is already active, or upload capacity is busy. Please try again shortly.'});
   const maxBytes=p.fileSize+p.fields.length*p.fieldSize+65536;
   if(Number(req.headers['content-length'])>maxBytes){release();return res.status(413).json({message:'Upload exceeds the request size limit'});}
+  const ticket=req[ticketKey];
+  const releaseLifecycle=ticket?.hold()||(()=>{});
   const state=req.uploadState={paths:new Set(),retained:new Set(),processing:false,done:false};
   const json=res.json;
   // The browser/deadline can close the response during provider or DB work.
@@ -70,10 +75,15 @@ function createUpload(category, { root=roots[category], beforeFile, admission=ad
    else req.destroy();
   };
   const timer=setTimeout(()=>state.rejectTransport(408,'Upload timed out. Contact support before retrying if the transfer began.'),p.duration);timer.unref();
-  state.finish=async()=>{if(state.done)return;state.done=true;clearTimeout(timer);try{for(const file of state.paths)if(!state.retained.has(file))await removeStored(file,root);}finally{release();}};
+  state.finish=()=>{
+   if(!state.finishPromise)state.finishPromise=(async()=>{state.done=true;clearTimeout(timer);try{for(const file of state.paths)if(!state.retained.has(file)&&!await removeStored(file,root))ticket?.cleanupFailed();}finally{release();releaseLifecycle();}})();
+   return state.finishPromise;
+  };
   res.once('finish',()=>{if(!state.processing)void state.finish();});
   res.once('close',()=>{if(!state.processing)void state.finish();});
-  parser(req,res,async error=>{
+  const releaseParser=ticket?.hold()||(()=>{});
+  try{parser(req,res,async error=>{
+   try{
    if(error){await state.finish();return uploadError(res,error);}
    try {
     if(Object.entries(req.body||{}).some(([key,value])=>!p.fields.includes(key)||typeof value!=='string'))throw new Error('Invalid fields');
@@ -81,7 +91,10 @@ function createUpload(category, { root=roots[category], beforeFile, admission=ad
     if(req.aborted||res.destroyed){await state.finish();return;}
     next();
    }catch(error){await state.finish();uploadError(res,error);}
-  });
- };
+   }finally{releaseParser();}
+  });}catch(error){releaseParser();void state.finish().then(()=>uploadError(res,error));}
+ }
+ // Defend every parser use, including future aliases; production routes also enter before auth.
+ return (req,res,next)=>req[ticketKey]?boundedUpload(req,res,next):ingress(req,res,()=>boundedUpload(req,res,next));
 }
 module.exports={roots,policies,createUpload,createAdmission,removeStored,storedReference,profilePath};

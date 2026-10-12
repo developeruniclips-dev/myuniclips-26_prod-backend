@@ -1,6 +1,7 @@
 // Synthetic local MySQL only; no dotenv, configured DB, provider/email, or credentials.
 const test=require('node:test'),assert=require('node:assert/strict'),mysql=require('mysql2/promise'),fs=require('node:fs'),path=require('node:path'),express=require('express'),jwt=require('jsonwebtoken');
 if(process.env.COURSE_WORKFLOW_ISOLATED_TEST!=='1')throw Error('Explicit local workflow fixture required');
+require('../src/utils/uploadBarrier').shared.resume(); // Explicit isolated fixture admission.
 process.env.JWT_SECRET='COURSE_WORKFLOW_SYNTHETIC';process.env.ADMIN_IP_WHITELIST_ENABLED='false';
 let actual,pool,service,server,base,providerMode={},providerAdapter,connections=0,providerState='READY',blockReady,releaseReady,providerReads=0,failAudit=false,queries=[];
 const inject=(file,value)=>{const f=require.resolve(file);require.cache[f]={id:f,filename:f,loaded:true,exports:value};};

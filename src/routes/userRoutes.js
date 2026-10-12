@@ -23,7 +23,8 @@ router.get("/:id", authMiddleware, async (req,res) => {
       if(!row)return res.status(404).json({message:'User not found'});res.json(row);
     } catch {res.status(503).json({message:'Unable to retrieve profile'});}
   }); // Must be logged in to view user details
-router.put("/profile", authMiddleware, uploadProfileFiles, updateUserProfile);
+const {shared:uploadBarrier}=require('../utils/uploadBarrier');
+router.put("/profile", uploadBarrier.ingress('image',{multipartOnly:true}), ...[authMiddleware,uploadProfileFiles,updateUserProfile].map(uploadBarrier.wrap));
 router.put("/:id", authMiddleware, authorizeRoles("SuperAdmin"), ops.updatePerson);
 router.delete("/super-admin/:id", authMiddleware, authorizeRoles("SuperAdmin"), ops.deleteUser);
 router.delete("/:id", authMiddleware, authorizeRoles("SuperAdmin"), ops.deleteUser);

@@ -7,6 +7,7 @@ const { uploadVideo: uploadMiddleware } = require('../middleware/uploadVideos');
 
 const { videoAdmission } = require('../middleware/uploadAdmission');
 const videoRoutes = Router();
+const {shared:uploadBarrier}=require('../utils/uploadBarrier');
 const content = require('../controller/courseContentController');
 videoRoutes.post('/scholar/courses/:subjectId/submit',authMiddleware,authorizeRoles('Scholar'),require('../controller/videoController').submitCourse);
 videoRoutes.get('/:id/readiness',authMiddleware,require('../controller/videoController').reviewReadiness);
@@ -38,11 +39,8 @@ videoRoutes.get('/subject/:subjectId', authMiddleware, listVideosBySubject);
 videoRoutes.get('/:id', authMiddleware, getVideo);
 videoRoutes.post(
   "/",
-  authMiddleware,
-  authorizeRoles("Scholar"),
-  videoAdmission,
-  uploadMiddleware,
-  uploadVideo
+  uploadBarrier.ingress('video'),
+  ...[authMiddleware,authorizeRoles("Scholar"),videoAdmission,uploadMiddleware,uploadVideo].map(uploadBarrier.wrap)
 );
 videoRoutes.get('/watch/:id', authMiddleware, watchVideo);
 

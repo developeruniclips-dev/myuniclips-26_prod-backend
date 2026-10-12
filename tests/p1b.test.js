@@ -1,3 +1,5 @@
+// Explicitly open only this isolated test process; production boots paused.
+require('../src/utils/uploadBarrier').shared.resume();
 // Loopback multipart, isolated temporary files and in-memory DB/provider adapters.
 // No dotenv, configured database, authentication credential or provider is used.
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os'),vm=require('node:vm'),http=require('node:http');
@@ -6,9 +8,11 @@ const security=require('../src/middleware/uploadSecurity'),{validateFileContent}
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'uniclips-upload-test-'));
 const directories=Object.fromEntries(['image','taskCard','video'].map(k=>[k,path.join(root,k)]));
 for(const d of Object.values(directories))fs.mkdirSync(d);
+let reconciliationRelease;
 let server,base,received=0,holdResponse,holdRelease,mode='success',oldReference='uploads/profile-images/existing.png',heldConnections=0,providerCalls=0;
 const logs=[], state={approved:true,owner:7,currentRole:true,full:false,duplicate:false,dbFailure:false,providerFailure:false,persistenceFailure:false};
 const db={async beginTransaction(){},async commit(){if(state.commitFailure)throw Error('SECRET_DB_ERROR');},async rollback(){},release(){heldConnections--;},async query(sql,args){
+ if(sql.startsWith("UPDATE course_workflow_uploads SET state='RECONCILIATION_REQUIRED'")&&state.reconcileDelay){await new Promise(r=>reconciliationRelease=r);return [{affectedRows:1}];}
  if(sql.startsWith('INSERT IGNORE INTO course_workflows'))return [{}];
  if(sql.startsWith('SELECT * FROM course_workflows'))return [[{offering_id:1,state:'DRAFT',revision:0}]];
  if(sql.startsWith('SELECT COUNT(*) AS n FROM course_workflow_uploads'))return [[{n:0}]];
@@ -52,7 +56,7 @@ app.get('/document/:userId',authenticate,cards.getTaskCard);
 app.use('/uploads',cards.publicUploadBoundary,express.static(root));
 test.before(async()=>{server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));base=`http://127.0.0.1:${server.address().port}`;fs.writeFileSync(path.join(directories.taskCard,'document.pdf'),fixtures.pdf);});
 test.after(async()=>{server.closeAllConnections();await new Promise(r=>server.close(r));fs.rmSync(root,{recursive:true,force:true});});
-test.beforeEach(()=>{Object.assign(state,{approved:true,owner:7,currentRole:true,full:false,duplicate:false,dbFailure:false,providerFailure:false,persistenceFailure:false,providerDelay:false,preferenceFailure:false,commitFailure:false});mode='success';});
+test.beforeEach(()=>{Object.assign(state,{approved:true,owner:7,currentRole:true,full:false,duplicate:false,dbFailure:false,providerFailure:false,persistenceFailure:false,providerDelay:false,preferenceFailure:false,commitFailure:false,reconcileDelay:false});mode='success';});
 const mimes={jpg:'image/jpeg',png:'image/png',gif:'image/gif',webp:'image/webp',pdf:'application/pdf',mp4:'video/mp4',mov:'video/quicktime',avi:'video/x-msvideo',mkv:'video/x-matroska',webm:'video/webm'};
 async function upload(route,category,ext,data=fixtures[ext],fields={},userId=7,fileField=security.policies[category].field){const form=new FormData();for(const [k,v]of Object.entries(fields))form.append(k,v);if(data)form.append(fileField,new Blob([data],{type:mimes[ext]||'application/octet-stream'}),'fixture.'+ext);const r=await fetch(base+route,{method:route==='/profile'?'PUT':'POST',headers:userId?{'x-test-user':String(userId)}:{},body:form});return {status:r.status,body:await r.json()};}
 const settle=()=>new Promise(r=>setTimeout(r,30));
@@ -130,15 +134,16 @@ test('video admission denies anonymous, revoked Scholar, unapproved, wrong cours
  for(const [flag,value,status]of [['currentRole',false,403],['approved',false,403],['owner',8,403],['full',true,409]]){state[flag]=value;const before=providerCalls;assert.equal((await upload('/lesson?subjectId=5','video','mp4',fixtures.mp4,fields)).status,status);assert.equal(providerCalls,before);assert.deepEqual(fs.readdirSync(directories.video),[]);state[flag]=flag==='owner'?7:flag==='full'?false:true;}
 });
 test('video provider delay holds no DB connection, active admission prevents another upload',async()=>{
- state.providerDelay=true;const first=upload('/lesson?subjectId=5','video','mp4',fixtures.mp4,{subjectId:'5',title:'Synthetic',description:''});while(!holdRelease)await settle();assert.equal(heldConnections,0);assert.equal((await upload('/lesson?subjectId=5','video','mp4',fixtures.mp4,{title:'Second',description:''})).status,429);holdRelease();assert.equal((await first).status,201);assert.deepEqual(fs.readdirSync(directories.video),[]);
+ state.providerDelay=true;const first=upload('/lesson?subjectId=5','video','mp4',fixtures.mp4,{subjectId:'5',title:'Synthetic',description:''});while(!holdRelease)await settle();assert.equal(heldConnections,0);assert.equal(require('../src/utils/uploadBarrier').shared.status().activeHandlers.video,1);assert.equal((await upload('/lesson?subjectId=5','video','mp4',fixtures.mp4,{title:'Second',description:''})).status,429);holdRelease();assert.equal((await first).status,201);assert.deepEqual(fs.readdirSync(directories.video),[]);
 });
 test('disconnect during provider transfer retains admission until completion and then cleans safely',async()=>{
  state.providerDelay=true;holdRelease=null;
  const body=new FormData();body.append('subjectId','5');body.append('title','Disconnect');body.append('description','');body.append('video',new Blob([fixtures.mp4],{type:'video/mp4'}),'disconnect.mp4');
  const abort=new AbortController();const response=fetch(base+'/lesson?subjectId=5',{method:'POST',headers:{'x-test-user':'7'},body,signal:abort.signal}).catch(error=>error);
- while(!holdRelease)await settle();abort.abort();await response;
+ while(!holdRelease)await settle();assert.equal(require('../src/utils/uploadBarrier').shared.status().activeHandlers.video,1);abort.abort();await response;
+ assert.equal(require('../src/utils/uploadBarrier').shared.status().activeHandlers.video,1);
  assert.equal((await upload('/lesson?subjectId=5','video','mp4',fixtures.mp4,{title:'Second',description:''})).status,429);
- holdRelease();await cleaned('video',[]);assert.equal(heldConnections,0);
+ holdRelease();await cleaned('video',[]);assert.equal(heldConnections,0);await settle();assert.equal(require('../src/utils/uploadBarrier').shared.status().activeHandlers.video,0);
  state.providerDelay=false;assert.equal((await upload('/lesson?subjectId=5','video','mp4',fixtures.mp4,{title:'After completion',description:''})).status,201);
 });
 test('provider failure, persistence failure and mismatched body target clean local video',async()=>{
@@ -157,4 +162,13 @@ test('aborted disk uploads clean partial writes and release admission for all th
   await new Promise(resolve=>{const req=http.request(base+'/'+category,{method:'POST',headers:{'x-test-user':'7','Content-Type':'multipart/form-data; boundary=abort'}},()=>{});req.on('error',()=>resolve());req.write(`--abort\r\nContent-Disposition: form-data; name="${security.policies[category].field}"; filename="abort.${ext}"\r\nContent-Type: ${mimes[ext]}\r\n\r\n`);req.write(Buffer.alloc(65536));setTimeout(()=>{req.destroy();resolve();},30);});
   await new Promise(r=>setTimeout(r,100));assert.deepEqual(fs.readdirSync(directories[category]),category==='taskCard'?['document.pdf']:[]);assert.equal((await upload('/'+category,category,ext)).status,200);await settle();
  }
+});
+
+test('all completed and aborted parsers leave no active lifecycle leases',async()=>{await settle();assert.equal(require('../src/utils/uploadBarrier').shared.status().activeTotal,0);});
+
+test('actual provider failure stays active through awaited durable reconciliation',async()=>{
+ state.providerFailure=true;state.reconcileDelay=true;reconciliationRelease=null;
+ const response=upload('/lesson?subjectId=5','video','mp4',fixtures.mp4,{subjectId:'5',title:'Reconcile',description:''});
+ while(!reconciliationRelease)await settle();assert.equal(require('../src/utils/uploadBarrier').shared.status().activeHandlers.video,1);
+ reconciliationRelease();assert.equal((await response).status,500);await settle();assert.equal(require('../src/utils/uploadBarrier').shared.status().activeTotal,0);
 });
