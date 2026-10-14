@@ -27,9 +27,9 @@ const createConnectAccount = async (req, res) => {
         // Check if Stripe is properly configured
         const configErrors = checkStripeConfiguration();
         if (configErrors.length > 0) {
-            console.error('Stripe configuration errors:', configErrors);
+            require('../utils/safeLogging').logError('Stripe configuration unavailable', undefined);
             return res.status(503).json({ 
-                message: 'Stripe is not configured properly. Missing: ' + configErrors.join(', ')
+                message: 'Payment setup is temporarily unavailable'
             });
         }
 
@@ -43,7 +43,7 @@ const createConnectAccount = async (req, res) => {
 
         if (scholarProfile.length === 0) {
             return res.status(403).json({ 
-                message: 'Scholar profile not found or not approved' 
+                message: 'Scholar profile not found or not approved'
             });
         }
 
@@ -122,10 +122,9 @@ const createConnectAccount = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error creating Stripe Connect account:', error);
+        require('../utils/safeLogging').logError('Error creating Stripe Connect account:', error);
         res.status(500).json({ 
-            message: 'Error creating Stripe account', 
-            error: error.message 
+            message: 'Error creating Stripe account'
         });
     }
 };
@@ -147,7 +146,7 @@ const getAccountStatus = async (req, res) => {
             );
         } catch (dbError) {
             // If the query fails (missing columns), try simpler query
-            console.warn('Extended stripe columns not found, using basic query:', dbError.message);
+            require('../utils/safeLogging').logError('Extended stripe columns not found, using basic query:', dbError);
             [scholarProfile] = await pool.query(
                 'SELECT stripe_account_id FROM scholar_profile WHERE user_id = ?',
                 [scholarUserId]
@@ -209,7 +208,7 @@ const getAccountStatus = async (req, res) => {
                 ]
             );
         } catch (updateError) {
-            console.warn('Could not update stripe status columns:', updateError.message);
+            require('../utils/safeLogging').logError('Could not update stripe status columns:', updateError);
         }
 
         // Only consider "linked" if onboarding is complete (details_submitted AND charges_enabled)
@@ -227,10 +226,9 @@ const getAccountStatus = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error getting Stripe account status:', error);
+        require('../utils/safeLogging').logError('Error getting Stripe account status:', error);
         res.status(500).json({ 
-            message: 'Error retrieving account status', 
-            error: error.message 
+            message: 'Error retrieving account status'
         });
     }
 };
@@ -249,7 +247,7 @@ const createDashboardLink = async (req, res) => {
 
         if (scholarProfile.length === 0 || !scholarProfile[0].stripe_account_id) {
             return res.status(404).json({ 
-                message: 'Stripe account not found' 
+                message: 'Stripe account not found'
             });
         }
 
@@ -260,10 +258,9 @@ const createDashboardLink = async (req, res) => {
         res.json({ url: loginLink.url });
 
     } catch (error) {
-        console.error('Error creating dashboard link:', error);
+        require('../utils/safeLogging').logError('Error creating dashboard link:', error);
         res.status(500).json({ 
-            message: 'Error creating dashboard link', 
-            error: error.message 
+            message: 'Error creating dashboard link'
         });
     }
 };
@@ -294,10 +291,9 @@ const getPlatformBalance = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error getting platform balance:', error);
+        require('../utils/safeLogging').logError('Error getting platform balance:', error);
         res.status(500).json({ 
-            message: 'Error getting platform balance', 
-            error: error.message 
+            message: 'Error getting platform balance'
         });
     }
 };
@@ -362,7 +358,7 @@ const getAllScholarsStripeStatus = async (req, res) => {
                 ORDER BY u.fname, u.lname
             `);
         } catch (dbError) {
-            console.warn('Extended stripe columns not found, using basic query:', dbError.message);
+            require('../utils/safeLogging').logError('Extended stripe columns not found, using basic query:', dbError);
             [scholars] = await pool.query(`
                 SELECT 
                     u.id,
@@ -435,7 +431,7 @@ const getAllScholarsStripeStatus = async (req, res) => {
                         pendingBalance: pendingBalance.toFixed(2)
                     };
                 } catch (error) {
-                    console.error(`Error retrieving Stripe account for scholar ${scholar.id}:`, error.message);
+                    require('../utils/safeLogging').logError('Account operation failed', undefined);
                     return {
                         ...scholar,
                         stripeStatus: 'Error',
@@ -450,10 +446,9 @@ const getAllScholarsStripeStatus = async (req, res) => {
         res.json({ scholars: scholarsWithStripeStatus });
 
     } catch (error) {
-        console.error('Error getting scholars Stripe status:', error);
+        require('../utils/safeLogging').logError('Error getting scholars Stripe status:', error);
         res.status(500).json({ 
-            message: 'Error retrieving scholars status', 
-            error: error.message 
+            message: 'Error retrieving scholars status'
         });
     }
 };
@@ -482,7 +477,7 @@ const sendVerificationEmail = async (req, res) => {
 
         if (scholarProfile.length === 0 || !scholarProfile[0].stripe_account_id) {
             return res.status(404).json({ 
-                message: 'Stripe account not found. Please connect your Stripe account first.' 
+                message: 'Stripe account not found. Please connect your Stripe account first.'
             });
         }
 
@@ -522,10 +517,10 @@ const sendVerificationEmail = async (req, res) => {
         );
 
         if (!emailResult.success) {
-            console.error('Failed to send Stripe verification email:', emailResult.error);
+            require('../utils/safeLogging').logError('Verification email delivery failed', undefined);
             return res.status(500).json({ 
                 message: 'Failed to send verification email. Please try again.',
-                error: emailResult.error
+                error: 'Email delivery failed'
             });
         }
 
@@ -536,10 +531,9 @@ const sendVerificationEmail = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error sending Stripe verification email:', error);
+        require('../utils/safeLogging').logError('Error sending Stripe verification email:', error);
         res.status(500).json({ 
-            message: 'Error sending verification email', 
-            error: error.message 
+            message: 'Error sending verification email'
         });
     }
 };
@@ -582,10 +576,9 @@ const getAccountRequirements = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error getting Stripe requirements:', error);
+        require('../utils/safeLogging').logError('Error getting Stripe requirements:', error);
         res.status(500).json({ 
-            message: 'Error retrieving account requirements', 
-            error: error.message 
+            message: 'Error retrieving account requirements'
         });
     }
 };

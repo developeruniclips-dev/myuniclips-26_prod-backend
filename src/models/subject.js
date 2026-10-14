@@ -1,7 +1,8 @@
+const {readBounded}=require('../utils/readCapacity');
 const { pool } = require('../config/db');
 
 const SubjectModel = {
-    findAll: () => pool.query("SELECT * FROM subjects"),
+    findAll: () => readBounded(pool,"SELECT * FROM subjects"),
 
     findById: (id) => pool.query("SELECT * FROM subjects WHERE id = ?", [id]),
 

@@ -13,7 +13,7 @@ const scholarMustBeApproved = async (req, res, next) => {
 
     next();
   } catch (err) {
-    console.error(err);
+    require('../utils/safeLogging').logError('Permission lookup failed', err);
     res.status(500).json({ message: "Server error" });
   }
 };

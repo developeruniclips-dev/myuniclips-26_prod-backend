@@ -153,6 +153,8 @@ function startupDouble(ready, operatorReady=Promise.resolve({close:async()=>{}})
   const module = { exports: {} };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/index.js'), 'utf8'), {
     process: processDouble, module, __dirname: '/fixture/src', console: { log() {}, error: s => state.logs.push(s) }, require(name) {
+      if (name === './utils/boundedAccessLog') return { createBoundedAccessLog: () => ({write(){},end:async()=>{}}) };
+      if (name === './middleware/publicErrors') return {errorHandler:()=>{}};
       if (name === 'express') return express;
       if (name === 'dotenv') return { config() {} };
       if (name === 'path') return path;

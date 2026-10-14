@@ -1,3 +1,4 @@
+const {readQuery}=require('./readCapacity');
 const hamkLanguages = require('../config/hamkProgrammeLanguages.json');
 const { universityLabel } = require('./academicContext');
 
@@ -45,10 +46,11 @@ async function annotateCourses(db, offerings) {
     const ids = [...new Set(offerings.map(row => Number(row.subject_id)).filter(id => Number.isInteger(id) && id > 0))];
     if (!ids.length) return offerings;
     // One batch for the universities represented in this response, not one query per card/video.
-    const [subjects] = await db.query(`SELECT s.id, s.name, s.degree_programmes, s.university_id,
+    const [subjects] = await readQuery(db,`SELECT s.id, s.name, s.degree_programmes, s.university_id,
         u.name AS university_name, u.short_name AS university_short_name
         FROM subjects s JOIN universities u ON u.id = s.university_id
-        WHERE s.university_id IN (SELECT university_id FROM subjects WHERE id IN (?))`, [ids]);
+        WHERE s.university_id IN (SELECT university_id FROM subjects WHERE id IN (?)) LIMIT 10001`, [ids]);
+    if(subjects.length>10000)throw Object.assign(new Error("Academic catalogue is temporarily unavailable"),{status:503});
     const index = buildGeneralCourseIndex(subjects);
     return offerings.map(row => ({ ...row, ...index.get(Number(row.subject_id)) }));
 }

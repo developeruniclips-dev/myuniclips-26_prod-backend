@@ -1,3 +1,4 @@
+const {readBounded}=require('../utils/readCapacity');
 const { pool } = require('../config/db');
 const bcrypt = require('bcryptjs');
 
@@ -28,8 +29,8 @@ const getAdminProfile = async (req, res) => {
         
         res.json(rows[0]);
     } catch (error) {
-        console.error("Error fetching admin profile:", error);
-        res.status(500).json({ message: "Server error", error: error.message });
+        require('../utils/safeLogging').logError("Error fetching admin profile:", error);
+        res.status(500).json({ message: "Server error" });
     }
 };
 
@@ -63,8 +64,8 @@ const updateAdminProfile = async (req, res) => {
         
         res.json({ message: "Profile updated successfully" });
     } catch (error) {
-        console.error("Error updating admin profile:", error);
-        res.status(500).json({ message: "Server error", error: error.message });
+        require('../utils/safeLogging').logError("Error updating admin profile:", error);
+        res.status(500).json({ message: "Server error" });
     }
 };
 
@@ -73,7 +74,7 @@ const updateAdminProfile = async (req, res) => {
  */
 const getAllUsers = async (req, res) => {
     try {
-        const [rows] = await pool.query(`
+        const [rows] = await readBounded(pool,`
             SELECT 
                 u.id, 
                 u.fname, 
@@ -94,8 +95,8 @@ const getAllUsers = async (req, res) => {
         
         res.json(rows);
     } catch (error) {
-        console.error("Error fetching users:", error);
-        res.status(500).json({ message: "Server error", error: error.message });
+        require('../utils/safeLogging').logError("Error fetching users:", error);
+        res.status(500).json({ message: "Server error" });
     }
 };
 
@@ -155,8 +156,8 @@ const createAdmin = async (req, res) => {
             userId: newUserId
         });
     } catch (error) {
-        console.error("Error creating admin:", error);
-        res.status(500).json({ message: "Server error", error: error.message });
+        require('../utils/safeLogging').logError("Error creating admin:", error);
+        res.status(500).json({ message: "Server error" });
     }
 };
 
@@ -194,8 +195,8 @@ const updateUserRole = async (req, res) => {
         
         res.json({ message: "User role updated successfully" });
     } catch (error) {
-        console.error("Error updating user role:", error);
-        res.status(500).json({ message: "Server error", error: error.message });
+        require('../utils/safeLogging').logError("Error updating user role:", error);
+        res.status(500).json({ message: "Server error" });
     }
 };
 
@@ -237,7 +238,7 @@ const deleteUser = async (req, res) => {
                 await pool.query(query, [userId]);
             } catch (err) {
                 // Table might not exist, skip silently
-                console.warn(`Cleanup warning for user ${userId}:`, err.message);
+                require('../utils/safeLogging').logError('Account operation failed', undefined);
             }
         }
         
@@ -249,8 +250,8 @@ const deleteUser = async (req, res) => {
         
         res.json({ message: "User deleted successfully" });
     } catch (error) {
-        console.error("Error deleting user:", error);
-        res.status(500).json({ message: "Server error", error: error.message });
+        require('../utils/safeLogging').logError("Error deleting user:", error);
+        res.status(500).json({ message: "Server error" });
     }
 };
 
@@ -279,8 +280,8 @@ const getSecurityUpdates = async (req, res) => {
         
         res.json(rows);
     } catch (error) {
-        console.error("Error fetching security updates:", error);
-        res.status(500).json({ message: "Server error", error: error.message });
+        require('../utils/safeLogging').logError("Error fetching security updates:", error);
+        res.status(500).json({ message: "Server error" });
     }
 };
 
@@ -308,8 +309,8 @@ const createSecurityUpdate = async (req, res) => {
             id: result.insertId
         });
     } catch (error) {
-        console.error("Error creating security update:", error);
-        res.status(500).json({ message: "Server error", error: error.message });
+        require('../utils/safeLogging').logError("Error creating security update:", error);
+        res.status(500).json({ message: "Server error" });
     }
 };
 
@@ -341,8 +342,8 @@ const updateSecurityStatus = async (req, res) => {
         
         res.json({ message: "Security update status changed" });
     } catch (error) {
-        console.error("Error updating security status:", error);
-        res.status(500).json({ message: "Server error", error: error.message });
+        require('../utils/safeLogging').logError("Error updating security status:", error);
+        res.status(500).json({ message: "Server error" });
     }
 };
 
@@ -366,8 +367,8 @@ const getActivityLog = async (req, res) => {
         
         res.json(rows);
     } catch (error) {
-        console.error("Error fetching activity log:", error);
-        res.status(500).json({ message: "Server error", error: error.message });
+        require('../utils/safeLogging').logError("Error fetching activity log:", error);
+        res.status(500).json({ message: "Server error" });
     }
 };
 
@@ -381,7 +382,7 @@ const logActivity = async (userId, action, targetType, targetId, details, ipAddr
             [userId, action, targetType, targetId, details, ipAddress]
         );
     } catch (error) {
-        console.error("Error logging activity:", error);
+        require('../utils/safeLogging').logError("Error logging activity:", error);
     }
 };
 
@@ -414,7 +415,7 @@ const getSuperAdminStats = async (req, res) => {
             securityCount = securityStats[0]?.pending || 0;
         } catch (err) {
             // Table might not exist yet
-            console.warn('security_updates table may not exist:', err.message);
+            require('../utils/safeLogging').logError('security_updates table may not exist:', err);
         }
         
         // Pending scholar applications
@@ -426,7 +427,7 @@ const getSuperAdminStats = async (req, res) => {
             const [activityStats] = await pool.query('SELECT COUNT(*) as recent FROM admin_activity_log WHERE created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR)');
             activityCount = activityStats[0]?.recent || 0;
         } catch (err) {
-            console.warn('admin_activity_log table may not exist:', err.message);
+            require('../utils/safeLogging').logError('admin_activity_log table may not exist:', err);
         }
         
         res.json({
@@ -440,8 +441,8 @@ const getSuperAdminStats = async (req, res) => {
             activity: { recent: activityCount }
         });
     } catch (error) {
-        console.error("Error fetching superadmin stats:", error);
-        res.status(500).json({ message: "Server error", error: error.message });
+        require('../utils/safeLogging').logError("Error fetching superadmin stats:", error);
+        res.status(500).json({ message: "Server error" });
     }
 };
 
@@ -464,7 +465,7 @@ const getOrphanedUsers = async (req, res) => {
                 GROUP BY ur.user_id
             `);
             orphanedRoles = rows;
-        } catch (e) { console.warn('orphanedRoles query skipped:', e.message); }
+        } catch (e) { require('../utils/safeLogging').logError('orphanedRoles query skipped:', e); }
 
         // Find orphaned user_ids from scholar_profile
         let orphanedScholars = [];
@@ -479,7 +480,7 @@ const getOrphanedUsers = async (req, res) => {
                 WHERE sp.user_id NOT IN (SELECT id FROM users)
             `);
             orphanedScholars = rows;
-        } catch (e) { console.warn('orphanedScholars query skipped:', e.message); }
+        } catch (e) { require('../utils/safeLogging').logError('orphanedScholars query skipped:', e); }
 
         // Find orphaned user_ids from scholar_subjects
         let orphanedSubjects = [];
@@ -495,7 +496,7 @@ const getOrphanedUsers = async (req, res) => {
                 WHERE ss.scholar_user_id NOT IN (SELECT id FROM users)
             `);
             orphanedSubjects = rows;
-        } catch (e) { console.warn('orphanedSubjects query skipped:', e.message); }
+        } catch (e) { require('../utils/safeLogging').logError('orphanedSubjects query skipped:', e); }
 
         // Find orphaned videos
         let orphanedVideos = [];
@@ -509,7 +510,7 @@ const getOrphanedUsers = async (req, res) => {
                 GROUP BY v.scholar_user_id
             `);
             orphanedVideos = rows;
-        } catch (e) { console.warn('orphanedVideos query skipped:', e.message); }
+        } catch (e) { require('../utils/safeLogging').logError('orphanedVideos query skipped:', e); }
 
         // Merge all orphaned data by user_id
         const orphanedMap = {};
@@ -541,8 +542,8 @@ const getOrphanedUsers = async (req, res) => {
 
         res.json({ orphanedUsers });
     } catch (error) {
-        console.error("Error fetching orphaned users:", error);
-        res.status(500).json({ message: "Server error", error: error.message });
+        require('../utils/safeLogging').logError("Error fetching orphaned users:", error);
+        res.status(500).json({ message: "Server error" });
     }
 };
 
@@ -575,7 +576,7 @@ const cleanupOrphanedUser = async (req, res) => {
                 const [result] = await pool.query(query, [userId]);
                 totalDeleted += result.affectedRows || 0;
             } catch (err) {
-                console.warn(`Cleanup warning for orphaned user ${userId}:`, err.message);
+                require('../utils/safeLogging').logError('Account operation failed', undefined);
             }
         }
 
@@ -584,8 +585,8 @@ const cleanupOrphanedUser = async (req, res) => {
 
         res.json({ message: `Cleaned up ${totalDeleted} orphaned records for user #${userId}` });
     } catch (error) {
-        console.error("Error cleaning up orphaned user:", error);
-        res.status(500).json({ message: "Server error", error: error.message });
+        require('../utils/safeLogging').logError("Error cleaning up orphaned user:", error);
+        res.status(500).json({ message: "Server error" });
     }
 };
 

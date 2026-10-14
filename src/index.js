@@ -6,7 +6,8 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const { createApiRateLimiter } = require('./middleware/apiRateLimiter');
 const morgan = require("morgan");
-const fs = require("fs");
+const { createBoundedAccessLog } = require('./utils/boundedAccessLog');
+const { errorHandler } = require('./middleware/publicErrors');
 const { requestLogger, logError } = require('./utils/safeLogging');
 const { pool, initializeDatabase } = require('./config/db');
 const {shared:uploadBarrier}=require('./utils/uploadBarrier');
@@ -27,20 +28,9 @@ app.set('trust proxy', 1);
 // ===== SECURITY: API Request Logging =====
 // Create logs directory if it doesn't exist
 const logsDir = path.join(__dirname, '../logs');
-if (!fs.existsSync(logsDir)) {
-  fs.mkdirSync(logsDir, { recursive: true });
-}
-
-// Log to file in production, console in development
-if (process.env.NODE_ENV === 'production') {
-  const accessLogStream = fs.createWriteStream(
-    path.join(logsDir, 'access.log'), 
-    { flags: 'a' }
-  );
-  app.use(requestLogger(morgan, { production: true, stream: accessLogStream }));
-} else {
-  app.use(requestLogger(morgan));
-}
+const accessLogStream = process.env.NODE_ENV === 'production' ? createBoundedAccessLog(logsDir) : undefined;
+app.use(requestLogger(morgan, { production: process.env.NODE_ENV === 'production', stream: accessLogStream }));
+process.once('beforeExit', () => accessLogStream?.end());
 
 // ===== SECURITY: Helmet.js for HTTP headers =====
 app.use(helmet({
@@ -122,20 +112,7 @@ app.use("/api", router);
 app.use("/purchase", purchaseRoutes);
 
 // ===== SECURITY: Global Error Handler (sanitized messages) =====
-app.use((err, req, res, next) => {
-  logError('Request handling failed', err);
-  
-  // Don't expose internal error details to clients
-  const statusCode = err.statusCode || 500;
-  const message = statusCode === 500 
-    ? "An internal server error occurred" 
-    : err.message;
-  
-  res.status(statusCode).json({ 
-    error: message,
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
-  });
-});
+app.use(errorHandler);
 
 // 404 handler
 app.use((req, res) => {

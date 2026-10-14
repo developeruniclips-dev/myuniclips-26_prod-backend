@@ -6,7 +6,7 @@ const {actorFromDb,staff,owner,fail,audit,tx,text,id,schemaUnavailable}=require(
 const data=createData(pool),cases=createCases(pool),actions=createActions(pool);
 const handler=work=>async(req,res)=>{try{res.json(await work(req));}catch(e){
     const unavailable=schemaUnavailable(e);
-    if(!e.status&&!unavailable)console.warn('Operations request failed',{path:req.route?.path,code:e.code||'UNKNOWN'});
+    if(!e.status&&!unavailable)require('../utils/safeLogging').logError('Operations request failed',e);
     res.status(e.status||(unavailable?503:500)).json({code:unavailable?.code,
         message:e.status?e.message:unavailable?.message||'Unable to complete this operation. Please retry.'});
 }};

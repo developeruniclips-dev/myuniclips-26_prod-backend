@@ -1,3 +1,4 @@
+const {requireExplicitPage,orderedPageInput,orderedClause,pageInput,pageRows,mapBounded,libraryReads,readQuery}=require('../utils/readCapacity');
 const { pool } = require('../config/db');
 const { annotateCourses } = require('../utils/generalCourses');
 const access=require('../services/contentAuthorization').createContentAuthorization(pool);
@@ -39,7 +40,7 @@ const removeFromLibrary = async (req, res) => {
 
     res.status(200).json({ message: 'Course removed from library', success: true });
   } catch (error) {
-    console.error('Error removing from library:', error);
+    require('../utils/safeLogging').logError('Error removing from library:', error);
     res.status(500).json({ message: 'Failed to remove course from library' });
   }
 };
@@ -48,14 +49,15 @@ const removeFromLibrary = async (req, res) => {
 const getMyLibrary = async (req, res) => {
   try {
     const userId = req.user.id;
-
-    // Get all courses in user's library
-    const [library] = await pool.query(`
+    await libraryReads.run(userId,async()=>{
+    const page=orderedPageInput(req.query,'saved',50,25),sort=orderedClause(page,'ul');
+    // Get one bounded course page in user's library
+    const [library] = await readQuery(pool,`
       SELECT 
         ul.id,
         ul.subject_id,
         ul.scholar_id,
-        ul.added_at,
+        ul.added_at, ${sort.select},
         s.name AS subject_name,
         s.degree_programmes,
         u.fname AS scholar_fname,
@@ -67,23 +69,25 @@ const getMyLibrary = async (req, res) => {
       LEFT JOIN scholar_profile sp ON ul.scholar_id = sp.user_id
       JOIN scholar_subjects ss ON ss.subject_id=ul.subject_id AND ss.scholar_user_id=ul.scholar_id
       JOIN course_workflows cw ON cw.offering_id=ss.id AND cw.state='PUBLISHED'
-      WHERE ul.user_id = ? AND sp.approved=1 AND ss.approved=1
-      ORDER BY ul.added_at DESC
-    `, [userId]);
+      WHERE ul.user_id = ? AND sp.approved=1 AND ss.approved=1 AND ${sort.where}
+      ORDER BY ${sort.order} LIMIT ?
+    `, [userId,...sort.args,page.limit+1]);
+    const {items,pagination}=pageRows(library,page);requireExplicitPage(req.query,pagination);
 
     // For each course, get video count and progress
-    const libraryWithProgress = await Promise.all(library.map(async (course) => {
+    const libraryWithProgress = await mapBounded(items,2,async (course) => {
       // Get all videos for this course
-      const [videos] = await pool.query(`
+      const [videos] = await readQuery(pool,`
         SELECT v.id, v.title, v.price, v.sequence_index,
           v.id=(SELECT first.id FROM videos first WHERE first.subject_id=v.subject_id AND first.scholar_user_id=v.scholar_user_id ORDER BY first.sequence_index,first.id LIMIT 1) AS is_free
         FROM videos v
         WHERE v.subject_id = ? AND v.scholar_user_id = ? AND v.approved = 1
-        ORDER BY v.sequence_index
+        ORDER BY v.sequence_index,v.id LIMIT 201
       `, [course.subject_id, course.scholar_id]);
+      if(videos.length>200)throw Object.assign(new Error('Course library is temporarily unavailable'),{status:503});
 
       // Get progress for these videos
-      const [progress] = await pool.query(`
+      const [progress] = await readQuery(pool,`
         SELECT video_id, watched
         FROM video_progress
         WHERE user_id = ? AND video_id IN (?)
@@ -110,9 +114,10 @@ const getMyLibrary = async (req, res) => {
           watched: progressMap[v.id] || false
         }))
       };
-    }));
+    });
 
-    res.status(200).json({ library: await annotateCourses(pool, libraryWithProgress) });
+    res.status(200).json({ library: await annotateCourses(pool, libraryWithProgress), pagination });
+    });
   } catch (error) {
     safeFailure(res,error);
   }
@@ -131,7 +136,7 @@ const isInLibrary = async (req, res) => {
 
     res.status(200).json({ inLibrary: rows.length > 0 });
   } catch (error) {
-    console.error('Error checking library:', error);
+    require('../utils/safeLogging').logError('Error checking library:', error);
     res.status(500).json({ message: 'Failed to check library status' });
   }
 };
@@ -166,8 +171,9 @@ const getCourseProgress = async (req, res) => {
     await access.course(req.user,subjectId,scholarId);
     const [videos] = await pool.query(`
       SELECT id FROM videos
-      WHERE subject_id = ? AND scholar_user_id = ? AND approved = 1
+      WHERE subject_id = ? AND scholar_user_id = ? AND approved = 1 LIMIT 201
     `, [subjectId, scholarId]);
+    if(videos.length>200)throw Object.assign(new Error('Course progress is temporarily unavailable'),{status:503});
 
     if (videos.length === 0) {
       return res.status(200).json({ progress: [], totalVideos: 0, watchedVideos: 0, progressPercent: 0 });
@@ -251,16 +257,20 @@ const getVideoProgress = async (req, res) => {
 // Dashboard summary reads existing playback records; it never writes progress.
 const getLearningProgress = async (req, res) => {
   try {
-    const [progress] = await pool.query(`
+    await libraryReads.run(req.user.id,async()=>{
+    const page=pageInput(req.query);
+    const [progress] = await readQuery(pool,`
       SELECT vp.video_id, vp.watched, vp.progress_seconds, vp.watched_at,
              v.subject_id, v.scholar_user_id AS scholar_id, v.title
       FROM video_progress vp
       JOIN videos v ON v.id = vp.video_id
-      WHERE vp.user_id = ? AND v.approved = 1
-    `, [req.user.id]);
-    res.json({ progress });
+      WHERE vp.user_id = ? AND v.approved = 1 AND vp.video_id < ?
+      ORDER BY vp.video_id DESC LIMIT ?
+    `, [req.user.id,page.before,page.limit+1]);
+    const {items,pagination}=pageRows(progress,page,'video_id');requireExplicitPage(req.query,pagination);res.json({progress:items,pagination});
+    });
   } catch (error) {
-    res.status(500).json({ message: 'Unable to load learning progress' });
+    safeFailure(res,error);
   }
 };
 

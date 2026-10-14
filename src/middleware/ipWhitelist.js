@@ -87,7 +87,7 @@ const adminIPWhitelist = (req, res, next) => {
     }
     
     // IP not whitelisted - log and reject
-    console.warn(`Admin access denied for IP: ${clientIP}. Not in whitelist.`);
+    console.warn('Admin IP restriction denied access');
     
     return res.status(403).json({
         message: 'Access denied. Your IP address is not authorized for admin access.',
@@ -121,7 +121,7 @@ const strictIPWhitelist = (req, res, next) => {
         return next();
     }
     
-    console.warn(`Strict admin access denied for IP: ${clientIP}`);
+    console.warn('Strict admin IP restriction denied access');
     
     return res.status(403).json({
         message: 'Access denied. Your IP address is not authorized.',

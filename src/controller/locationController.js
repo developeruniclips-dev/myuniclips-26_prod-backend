@@ -1,3 +1,4 @@
+const {readBounded}=require('../utils/readCapacity');
 const { pool } = require('../config/db');
 
 /**
@@ -5,13 +6,13 @@ const { pool } = require('../config/db');
  */
 const getAllCountries = async (req, res) => {
     try {
-        const [rows] = await pool.query(
+        const [rows] = await readBounded(pool,
             `SELECT c.id, c.name, c.code FROM countries c ${req.query.available === '1' ? 'WHERE EXISTS (SELECT 1 FROM universities u JOIN subjects s ON s.university_id = u.id WHERE u.country_id = c.id)' : ''} ORDER BY c.name`
         );
         res.json(rows);
     } catch (error) {
-        console.error("Error fetching countries:", error);
-        res.status(500).json({ message: "Server error fetching countries", error: error.message });
+        require('../utils/safeLogging').logError("Error fetching countries:", error);
+        res.status(500).json({ message: "Server error fetching countries" });
     }
 };
 
@@ -26,14 +27,14 @@ const getUniversitiesByCountry = async (req, res) => {
             return res.status(400).json({ message: "Country ID is required" });
         }
         
-        const [rows] = await pool.query(
+        const [rows] = await readBounded(pool,
             `SELECT u.id, u.name, u.short_name FROM universities u WHERE u.country_id = ? ${req.query.available === '1' ? 'AND EXISTS (SELECT 1 FROM subjects s WHERE s.university_id = u.id)' : ''} ORDER BY u.name`,
             [countryId]
         );
         res.json(rows);
     } catch (error) {
-        console.error("Error fetching universities:", error);
-        res.status(500).json({ message: "Server error fetching universities", error: error.message });
+        require('../utils/safeLogging').logError("Error fetching universities:", error);
+        res.status(500).json({ message: "Server error fetching universities" });
     }
 };
 
@@ -42,7 +43,7 @@ const getUniversitiesByCountry = async (req, res) => {
  */
 const getAllUniversities = async (req, res) => {
     try {
-        const [rows] = await pool.query(`
+        const [rows] = await readBounded(pool,`
             SELECT u.id, u.name, u.short_name, u.country_id, c.name as country_name, c.code as country_code
             FROM universities u
             JOIN countries c ON u.country_id = c.id
@@ -51,8 +52,8 @@ const getAllUniversities = async (req, res) => {
         `);
         res.json(rows);
     } catch (error) {
-        console.error("Error fetching all universities:", error);
-        res.status(500).json({ message: "Server error fetching universities", error: error.message });
+        require('../utils/safeLogging').logError("Error fetching all universities:", error);
+        res.status(500).json({ message: "Server error fetching universities" });
     }
 };
 
@@ -69,7 +70,7 @@ const getProgramsByUniversity = async (req, res) => {
         }
         
         // Filter programs by university_id
-        const [rows] = await pool.query(`
+        const [rows] = await readBounded(pool,`
             SELECT DISTINCT degree_programmes as program 
             FROM subjects 
             WHERE university_id = ? 
@@ -79,8 +80,8 @@ const getProgramsByUniversity = async (req, res) => {
         `, [universityId]);
         res.json(rows);
     } catch (error) {
-        console.error("Error fetching programs by university:", error);
-        res.status(500).json({ message: "Server error fetching programs", error: error.message });
+        require('../utils/safeLogging').logError("Error fetching programs by university:", error);
+        res.status(500).json({ message: "Server error fetching programs" });
     }
 };
 
@@ -90,7 +91,7 @@ const getProgramsByUniversity = async (req, res) => {
  */
 const getAllDegreePrograms = async (req, res) => {
     try {
-        const [rows] = await pool.query(`
+        const [rows] = await readBounded(pool,`
             SELECT DISTINCT degree_programmes as program 
             FROM subjects 
             WHERE degree_programmes IS NOT NULL 
@@ -99,8 +100,8 @@ const getAllDegreePrograms = async (req, res) => {
         `);
         res.json(rows);
     } catch (error) {
-        console.error("Error fetching all degree programs:", error);
-        res.status(500).json({ message: "Server error fetching degree programs", error: error.message });
+        require('../utils/safeLogging').logError("Error fetching all degree programs:", error);
+        res.status(500).json({ message: "Server error fetching degree programs" });
     }
 };
 
@@ -111,14 +112,14 @@ const getSubjectsByUniversityAndProgram = async (req, res) => {
     try {
         const { universityId, program } = req.params;
         
-        const [rows] = await pool.query(
+        const [rows] = await readBounded(pool,
             'SELECT id, name, degree_programmes FROM subjects WHERE university_id = ? AND degree_programmes = ? ORDER BY name',
             [universityId, program]
         );
         res.json(rows);
     } catch (error) {
-        console.error("Error fetching subjects:", error);
-        res.status(500).json({ message: "Server error fetching subjects", error: error.message });
+        require('../utils/safeLogging').logError("Error fetching subjects:", error);
+        res.status(500).json({ message: "Server error fetching subjects" });
     }
 };
 
@@ -148,8 +149,8 @@ const addCountry = async (req, res) => {
         if (error.code === 'ER_DUP_ENTRY') {
             return res.status(409).json({ message: "Country already exists" });
         }
-        console.error("Error adding country:", error);
-        res.status(500).json({ message: "Server error adding country", error: error.message });
+        require('../utils/safeLogging').logError("Error adding country:", error);
+        res.status(500).json({ message: "Server error adding country" });
     }
 };
 
@@ -180,8 +181,8 @@ const addUniversity = async (req, res) => {
         if (error.code === 'ER_DUP_ENTRY') {
             return res.status(409).json({ message: "University already exists in this country" });
         }
-        console.error("Error adding university:", error);
-        res.status(500).json({ message: "Server error adding university", error: error.message });
+        require('../utils/safeLogging').logError("Error adding university:", error);
+        res.status(500).json({ message: "Server error adding university" });
     }
 };
 

@@ -5,7 +5,7 @@ process.env.JWT_SECRET='P1D_SYNTHETIC_SIGNING_KEY';
 const config={host:'127.0.0.1',port:33316,user:'root',password:'',database:'uniclips_content_p1d_test'};
 let actual,pool,service,server,base,queries=[],failEntitlement=false,failRoles=false;
 const inject=(file,exports)=>{const f=require.resolve(file);require.cache[f]={id:f,filename:f,loaded:true,exports};};
-function instrument(db){return new Proxy(db,{get(target,key){if(key==='query')return async(sql,args)=>{queries.push({sql,args});assert.doesNotMatch(sql,/\b(CREATE|ALTER|DROP|TRUNCATE)\b/i);if(failEntitlement&&sql.includes('FROM subject_purchases'))throw Error('SYNTHETIC_PRIVATE_SQL');if(failRoles&&sql.startsWith('SELECT r.name'))throw Error('SYNTHETIC_PRIVATE_SQL');return target.query(sql,args);};if(key==='getConnection')return async()=>instrument(await target.getConnection());const value=target[key];return typeof value==='function'?value.bind(target):value;}});}
+function instrument(db){return new Proxy(db,{get(target,key){if(key==='query')return async(sql,args)=>{const text=typeof sql==='string'?sql:sql.sql;queries.push({sql:text,args});assert.doesNotMatch(text,/\b(CREATE|ALTER|DROP|TRUNCATE)\b/i);if(failEntitlement&&text.includes('FROM subject_purchases'))throw Error('SYNTHETIC_PRIVATE_SQL');if(failRoles&&text.startsWith('SELECT r.name'))throw Error('SYNTHETIC_PRIVATE_SQL');return target.query(sql,args);};if(key==='getConnection')return async()=>instrument(await target.getConnection());const value=target[key];return typeof value==='function'?value.bind(target):value;}});}
 const actor=(id=1,roles=['Learner'])=>({id,roles});
 async function token(id=1,roles=['Learner']){const[[row]]=await actual.query('SELECT * FROM users WHERE id=?',[id]);return jwt.sign({id,roles,purpose:'access',session:require('../src/utils/authSecurity').credentialBinding(row)},process.env.JWT_SECRET,{expiresIn:'1h'});}
 async function request(route,id=1,roles=['Learner'],body){return fetch(base+route,{method:body?'POST':'GET',headers:{...(id?{Authorization:'Bearer '+await token(id,roles)}:{}),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});}
@@ -65,3 +65,47 @@ test('saved library is metadata only and never grants paid playback',async()=>{c
 test('progress writes are authorized by real lesson and authenticated user only',async()=>{assert.equal((await request('/library/save-progress',1,['Learner'],{videoId:102,progressSeconds:12,userId:2})).status,403);assert.equal((await request('/library/save-progress',1,['Learner'],{videoId:101,progressSeconds:12,userId:2})).status,200);const[rows]=await actual.query('SELECT user_id FROM video_progress WHERE video_id=101');assert.deepEqual(rows.map(r=>r.user_id),[1]);});
 test('player URI projection accepts approved Vimeo forms and rejects arbitrary providers',()=>{const{playerMetadata}=require('../src/services/contentAuthorization');assert.deepEqual(playerMetadata('https://vimeo.com/123456/abcdef123'),{player_url:'https://player.vimeo.com/video/123456?h=abcdef123'});for(const uri of ['http://vimeo.com/123','https://evil.example/123','https://vimeo.com.evil.example/123','https://owner@vimeo.com/123','https://vimeo.com/123#secret'])assert.throws(()=>playerMetadata(uri),e=>e.status===503);});
 test('authorization request transactions contain zero DDL and use consistent read-only snapshots',async()=>{await service.playback(actor(),101);assert.ok(queries.some(q=>q.sql==='START TRANSACTION READ ONLY'));assert.ok(queries.every(q=>!/^\s*(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)/i.test(q.sql)));});
+
+test('P2-I real SQL cursor pages retain publication and media projections',async()=>{
+ try{for(let n=1000;n<1205;n++)await actual.query('INSERT INTO videos(id,subject_id,scholar_user_id,sequence_index,approved,is_free,title,video_url) VALUES(?,10,7,10,1,0,?,?)',[n,'Synthetic page lesson','https://vimeo.com/'+(900000+n)]);
+ const seen=[];let cursor;for(let i=0;i<4;i++){const r=await request('/videos/all-videos?limit=100'+(cursor?'&cursor='+cursor:''),0);assert.equal(r.status,200);const body=await r.json();assert.ok(body.videos.length<=100);assert.doesNotMatch(JSON.stringify(body),/video_url|player_url|scholar_email/);seen.push(...body.videos.map(v=>v.id));if(!body.pagination.hasMore)break;assert.equal(typeof body.pagination.nextCursor,'string');cursor=body.pagination.nextCursor;}
+ assert.equal(new Set(seen).size,seen.length);assert.equal(seen.filter(id=>id>=1000).length,205);
+ assert.equal((await request('/videos/all-videos?limit=101',0)).status,400);
+ }finally{await actual.query('DELETE FROM videos WHERE id>=1000');}
+});
+test('P2-I real read deadline discards the timed-out pool connection',async()=>{
+ const scoped=mysql.createPool({...config,connectionLimit:1,queueLimit:1});
+ try{await assert.rejects(require('../src/utils/readCapacity').readQuery(scoped,'SELECT SLEEP(11)'),e=>e.status===503&&e.code==='READ_CAPACITY_UNAVAILABLE');const[[row]]=await scoped.query('SELECT 1 AS value');assert.equal(row.value,1);}finally{await scoped.end();}
+});
+
+test('P2-I real ordered SQL retains recency, pending review priority and timestamp ties across pages',async()=>{
+ const {VideoModel}=require('../src/models/videos'),{orderedPageInput,pageRows}=require('../src/utils/readCapacity');
+ try{
+  await actual.query("UPDATE videos SET created_at=CASE id WHEN 101 THEN '2026-04-01' WHEN 102 THEN '2026-02-01' WHEN 103 THEN '2026-01-01' ELSE '2026-03-01' END");
+  await actual.query("UPDATE videos SET created_at=NULL,approved=NULL WHERE id=201");
+  for(const [kind,call,expectedSql] of [
+   ['created',p=>VideoModel.getAllVideos(p),"SELECT v.id FROM videos v WHERE v.id IN(101,102) ORDER BY v.created_at DESC,v.id DESC"],
+   ['created',p=>VideoModel.findByScholar(7,p),"SELECT id FROM videos WHERE scholar_user_id=7 ORDER BY created_at DESC,id DESC"],
+   ['review',p=>VideoModel.getAllVideosAdmin(p),"SELECT id FROM videos ORDER BY approved ASC,created_at DESC,id DESC"]
+  ]){
+   const seen=[];let cursor;
+   for(let n=0;n<10;n++){const p=orderedPageInput({limit:'1',...(cursor?{cursor}:{})},kind),[rows]=await call(p),r=pageRows(rows,p);seen.push(...r.items.map(x=>x.id));assert.equal('_page_time' in(r.items[0]||{}),false);if(!r.pagination.hasMore)break;cursor=r.pagination.nextCursor;assert.equal(typeof cursor,'string');}
+   assert.deepEqual(seen,(await actual.query(expectedSql))[0].map(x=>x.id));
+  }
+ }finally{await actual.query('UPDATE videos SET created_at=CURRENT_TIMESTAMP,approved=IF(id=103,0,1)');}
+});
+test('P2-I real library recency and complete per-course progress survive page boundaries and re-saves',async()=>{
+ try{
+  await actual.query('UPDATE scholar_subjects SET approved=1 WHERE id=2');
+  await actual.query("INSERT INTO course_workflows(offering_id,state,legacy_published) VALUES(2,'PUBLISHED',1) ON DUPLICATE KEY UPDATE state='PUBLISHED',legacy_published=1");
+  await actual.query('DELETE FROM user_library WHERE user_id=1');
+  await actual.query("INSERT INTO user_library(user_id,subject_id,scholar_id,added_at) VALUES(1,10,7,'2026-03-01'),(1,20,8,'2026-01-01')");
+  await actual.query("INSERT INTO video_progress(user_id,video_id,watched,progress_seconds) VALUES(1,101,1,12),(1,102,1,20) ON DUPLICATE KEY UPDATE watched=1,progress_seconds=VALUES(progress_seconds)");
+  const seen=[];let cursor,first;
+  for(let n=0;n<3;n++){const r=await request('/library/my-library?limit=1'+(cursor?'&cursor='+cursor:''));assert.equal(r.status,200);const b=await r.json();first??=b.library[0];seen.push(...b.library.map(x=>x.subject_id));if(!b.pagination.hasMore)break;cursor=b.pagination.nextCursor;assert.equal(typeof cursor,'string');}
+  assert.deepEqual(seen,[10,20]);assert.equal(first.totalVideos,2);assert.equal(first.watchedVideos,2);assert.equal(first.progressPercent,100);assert.deepEqual(first.videos.map(v=>v.id),[101,102]);
+  assert.doesNotMatch(JSON.stringify(first),/video_url|player_url|_page_time/);
+  const save=await request('/library/add',1,['Learner'],{subjectId:20,scholarId:8});assert.equal(save.status,200);
+  const after=await(await request('/library/my-library?limit=1')).json();assert.equal(after.library[0].subject_id,20);
+ }finally{await actual.query('DELETE FROM user_library WHERE user_id=1');await actual.query('DELETE FROM video_progress WHERE user_id=1');}
+});

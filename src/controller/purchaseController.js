@@ -4,7 +4,7 @@ const { annotateCourses } = require('../utils/generalCourses');
 
 const { paymentRuntime } = require('../services/paymentRelease');
 const paymentError = (res, error) => {
-  console.warn('Payment request failed', { code: error.code || 'verification_error' });
+  require('../utils/safeLogging').logError('Payment request failed', error);
   return res.status(error.status || 503).json({ message: error.status ? error.message : 'Unable to verify payment. Please retry or contact support.' });
 };
 const createCheckoutSession = async (req, res) => {
@@ -47,8 +47,8 @@ const checkSubjectPurchase = async (req, res) => {
       purchase: purchases[0] || null
     });
   } catch (err) {
-    console.error("Error checking subject purchase:", err);
-    res.status(500).json({ message: "Server error", error: err.message });
+    require('../utils/safeLogging').logError("Error checking subject purchase:", err);
+    res.status(500).json({ message: "Server error" });
   }
 };
 
@@ -63,8 +63,8 @@ const getMySubjectPurchases = async (req, res) => {
       purchases: await annotateCourses(pool, purchases)
     });
   } catch (err) {
-    console.error("Error fetching subject purchases:", err);
-    res.status(500).json({ message: "Server error", error: err.message });
+    require('../utils/safeLogging').logError("Error fetching subject purchases:", err);
+    res.status(500).json({ message: "Server error" });
   }
 };
 
@@ -89,10 +89,9 @@ const getUserPurchases = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Error fetching user purchases:", err);
+    require('../utils/safeLogging').logError("Error fetching user purchases:", err);
     return res.status(500).json({
-      message: "Server error fetching purchases",
-      error: err
+      message: "Server error fetching purchases"
     });
   }
 };
@@ -174,8 +173,8 @@ const getAllTransactions = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Error fetching transactions:", err);
-    res.status(500).json({ message: "Server error fetching transactions", error: err });
+    require('../utils/safeLogging').logError("Error fetching transactions:", err);
+    res.status(500).json({ message: "Server error fetching transactions" });
   }
 };
 

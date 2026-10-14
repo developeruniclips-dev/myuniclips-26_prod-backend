@@ -2,7 +2,8 @@
 require('dotenv').config();
 const { buildPoolConfig, verifyDatabaseConnection } = require('./databaseTls');
 
-const poolConfig = buildPoolConfig();
+// Bound waiting acquisitions without changing accepted TLS construction.
+const poolConfig = { ...buildPoolConfig(), queueLimit: 20 };
 const pool = mysql.createPool(poolConfig);
 if (poolConfig.ssl) console.log('Database TLS configuration loaded');
 

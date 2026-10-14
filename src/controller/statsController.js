@@ -31,7 +31,7 @@ const getPlatformStats = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error("Error fetching platform stats:", error);
+    require('../utils/safeLogging').logError("Error fetching platform stats:", error);
     res.status(500).json({ 
       success: false, 
       message: "Error fetching platform statistics" 

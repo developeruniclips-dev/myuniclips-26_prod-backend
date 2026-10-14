@@ -1,3 +1,4 @@
+const {requireExplicitPage,pageInput,orderedPageInput,pageRows,catalogueReads}=require('../utils/readCapacity');
 const { VideoModel } = require("../models/videos");
 const vimeoClient = require("../config/vimeo");
 const fs = require("fs");
@@ -112,10 +113,12 @@ const watchVideo = getVideo;
 // Get all videos
 const getAllVideos = async (req, res) => {
   try {
-    const [videos] = await VideoModel.getAllVideos();
-    const annotated = await annotateCourses(pool, videos.map(publicLesson));
-    res.status(200).json({ videos: req.query.category === 'general'
-      ? annotated.filter(video => video.is_general_university_course) : annotated });
+    await catalogueReads.run(null,async()=>{
+    const page=orderedPageInput(req.query),[rows]=await VideoModel.getAllVideos(page);
+    const {items,pagination}=pageRows(rows,page);requireExplicitPage(req.query,pagination);
+    const annotated=await annotateCourses(pool,items.map(publicLesson));
+    res.status(200).json({videos:req.query?.category==='general'?annotated.filter(v=>v.is_general_university_course):annotated,pagination});
+    });
   } catch (err) {
     contentError(res,err);
   }
@@ -126,8 +129,10 @@ const getScholarVideos = async (req, res) => {
   try {
     const scholarId = req.user.id;
     await contentAccess.requireScholar(req.user);
-    const [videos] = await VideoModel.findByScholar(scholarId);
-    res.status(200).json({ videos });
+    await catalogueReads.run(scholarId,async()=>{
+      const page=orderedPageInput(req.query),[rows]=await VideoModel.findByScholar(scholarId,page);
+      const {items,pagination}=pageRows(rows,page);requireExplicitPage(req.query,pagination);res.status(200).json({videos:items,pagination});
+    });
   } catch (err) {
     contentError(res,err);
   }
@@ -164,7 +169,7 @@ const approveVideo = async (req, res) => {
       price: finalPrice
     });
   } catch (err) {
-    console.error("Error approving video:", err);
+    require('../utils/safeLogging').logError("Error approving video:", err);
     res.status(err.status || 500).json({ message: err.status ? err.message : "Server error approving video" });
   }
 };
@@ -190,7 +195,7 @@ const deleteVideo = async (req, res) => {
     
     res.status(200).json({ message: "Video deleted successfully" });
   } catch (err) {
-    console.error("Error deleting video:", err);
+    require('../utils/safeLogging').logError("Error deleting video:", err);
     res.status(err.status || 500).json({ message: err.status ? err.message : "Server error deleting video" });
   }
 };
@@ -226,7 +231,7 @@ const deleteVideoByScholar = async (req, res) => {
     
     res.status(200).json({ message: "Video deleted successfully" });
   } catch (err) {
-    console.error("Error deleting video:", err);
+    require('../utils/safeLogging').logError("Error deleting video:", err);
     res.status(err.status || 500).json({ message: err.status ? err.message : "Server error deleting video" });
   }
 };
@@ -234,11 +239,13 @@ const deleteVideoByScholar = async (req, res) => {
 // Get all videos for admin (including unapproved)
 const getAllVideosAdmin = async (req, res) => {
   try {
-    const [videos] = await VideoModel.getAllVideosAdmin();
-    res.status(200).json({ videos });
+    await catalogueReads.run(req.user.id,async()=>{
+      const page=orderedPageInput(req.query,'review'),[rows]=await VideoModel.getAllVideosAdmin(page);
+      const {items,pagination}=pageRows(rows,page);requireExplicitPage(req.query,pagination);res.status(200).json({videos:items,pagination});
+    });
   } catch (err) {
-    console.error("Error fetching admin videos:", err);
-    res.status(500).json({ message: "Server error fetching videos" });
+    require('../utils/safeLogging').logError("Error fetching admin videos:", err);
+    contentError(res,err);
   }
 };
 

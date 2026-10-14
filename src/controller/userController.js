@@ -1,3 +1,4 @@
+const {readBounded}=require('../utils/readCapacity');
 const { UserModel } = require('../models/User');
 const { pool } = require('../config/db');
 const { learnerPreferences } = require('../utils/learnerPreferences');
@@ -8,7 +9,7 @@ const { logError } = require('../utils/safeLogging');
 const getAllUsers = async(req, res) => {
     try {
         // Get users with their scholar status by joining with scholar_profile and user_roles
-        const [rows] = await pool.query(`
+        const [rows] = await readBounded(pool,`
             SELECT 
                 u.id, 
                 u.fname, 
@@ -111,7 +112,7 @@ const getUserProfile = async (req, res) => {
         
         const [userRows] = await UserModel.findById(userId);
         if (userRows.length === 0) {
-            console.error('User not found:', userId);
+            require('../utils/safeLogging').logError('User lookup returned no record', undefined);
             return res.status(404).json({ message: "User not found" });
         }
         
@@ -269,7 +270,7 @@ const deleteUserBySuperAdmin = async (req, res) => {
 // Get all users with roles (for SuperAdmin view)
 const getAllUsersWithRoles = async (req, res) => {
     try {
-        const [rows] = await pool.query(`
+        const [rows] = await readBounded(pool,`
             SELECT 
                 u.id, 
                 u.fname, 

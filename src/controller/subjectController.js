@@ -6,8 +6,8 @@ const getAllSubjects = async(req, res) => {
         const [rows] = await SubjectModel.findAll();
         res.status(201).json(rows);
     } catch (error) {
-        console.error("Error fetching subjects:", error);
-        res.status(500).json({message: "Internal server error", error});
+        require('../utils/safeLogging').logError("Error fetching subjects:", error);
+        res.status(500).json({message: "Internal server error" });
     }
 };
 
@@ -21,8 +21,8 @@ const getOneSubject = async(req, res) => {
         const [row] = await SubjectModel.findById(id);
         res.status(201).json(row);
     } catch (error) {
-        console.error("Error fetching subjects: ", error);
-        res.status(500).json({message: "Internal server error", error});
+        require('../utils/safeLogging').logError("Error fetching subjects: ", error);
+        res.status(500).json({message: "Internal server error" });
     }
 };
 
@@ -40,8 +40,8 @@ const createSubject = async(req, res) => {
             subject: row[0]
         });
     } catch (error) {
-        console.error("Error creating subject: ", error);
-        res.status(500).json({message: "Internal server error", error});
+        require('../utils/safeLogging').logError("Error creating subject: ", error);
+        res.status(500).json({message: "Internal server error" });
     }
 };
 
@@ -58,8 +58,8 @@ const getAllPrograms = async (req, res) => {
         `);
         res.json(rows);
     } catch (error) {
-        console.error("Error fetching programs:", error);
-        res.status(500).json({ message: "Server error fetching programs", error });
+        require('../utils/safeLogging').logError("Error fetching programs:", error);
+        res.status(500).json({ message: "Server error fetching programs" });
     }
 };
 
@@ -74,8 +74,8 @@ const getSubjectsByProgram = async (req, res) => {
         );
         res.json(rows);
     } catch (error) {
-        console.error("Error fetching subjects by program:", error);
-        res.status(500).json({ message: "Server error fetching subjects", error });
+        require('../utils/safeLogging').logError("Error fetching subjects by program:", error);
+        res.status(500).json({ message: "Server error fetching subjects" });
     }
 };
 
@@ -108,8 +108,8 @@ const updateBundlePrice = async (req, res) => {
             updatedAt: new Date().toISOString()
         });
     } catch (error) {
-        console.error("Error updating bundle price:", error);
-        res.status(500).json({ message: "Server error updating bundle price", error });
+        require('../utils/safeLogging').logError("Error updating bundle price:", error);
+        res.status(500).json({ message: "Server error updating bundle price" });
     }
 };
 
@@ -130,8 +130,8 @@ const getSubjectBundlePrice = async (req, res) => {
             priceUpdatedAt: rows[0].bundle_price_updated_at || null
         });
     } catch (error) {
-        console.error("Error fetching bundle price:", error);
-        res.status(500).json({ message: "Server error", error });
+        require('../utils/safeLogging').logError("Error fetching bundle price:", error);
+        res.status(500).json({ message: "Server error" });
     }
 };
 

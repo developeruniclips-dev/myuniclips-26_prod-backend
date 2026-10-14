@@ -10,7 +10,7 @@ const stripeWebhook = async (req, res) => {
         return res.json({ received: true });
     }
     catch (error) {
-        console.warn('Stripe event processing failed', { eventId: event.id, code: error.code || 'verification_error' });
+        require('../utils/safeLogging').logError('Stripe event processing failed', error);
         return res.status(500).json({ message: 'Event processing incomplete; retry required' });
     }
 };

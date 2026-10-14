@@ -1,3 +1,4 @@
+const {readQuery,orderedClause}=require('../utils/readCapacity');
 const { pool } = require("../config/db");
 
 const VideoModel = {
@@ -26,9 +27,9 @@ const VideoModel = {
     );
   },
 
-  getAllVideos: () => pool.query(`
+  getAllVideos: (page={before:2147483647,limit:100}) => {page={...page,kind:'created'};const sort=orderedClause(page,'v');return readQuery(pool,`
     SELECT 
-      v.*, 
+      v.*, ${sort.select},
       v.id=(SELECT first.id FROM videos first WHERE first.subject_id=v.subject_id AND first.scholar_user_id=v.scholar_user_id ORDER BY first.sequence_index,first.id LIMIT 1) AS is_first_preview,
       u.fname AS scholar_fname, 
       u.lname AS scholar_lname, 
@@ -45,14 +46,14 @@ const VideoModel = {
     LEFT JOIN scholar_profile sp ON v.scholar_user_id = sp.user_id
     LEFT JOIN scholar_subjects ss ON v.subject_id = ss.subject_id AND v.scholar_user_id = ss.scholar_user_id
     JOIN course_workflows cw ON cw.offering_id=ss.id AND cw.state='PUBLISHED'
-    WHERE v.approved = 1 AND sp.approved = 1 AND ss.approved = 1
-    ORDER BY v.created_at DESC
-  `),
+    WHERE v.approved = 1 AND sp.approved = 1 AND ss.approved = 1 AND ${sort.where}
+    ORDER BY ${sort.order} LIMIT ?
+  `, [...sort.args,page.limit+1]);},
 
   // Get ALL videos for admin (including unapproved)
-  getAllVideosAdmin: () => pool.query(`
+  getAllVideosAdmin: (page={before:2147483647,limit:100}) => {page={...page,kind:'review'};const sort=orderedClause(page,'v');return readQuery(pool,`
     SELECT 
-      v.*, 
+      v.*, ${sort.select},
       u.fname AS scholar_fname, 
       u.lname AS scholar_lname, 
       u.email AS scholar_email, 
@@ -67,8 +68,8 @@ const VideoModel = {
     JOIN subjects s ON v.subject_id = s.id 
     LEFT JOIN scholar_profile sp ON v.scholar_user_id = sp.user_id
     LEFT JOIN scholar_subjects ss ON v.subject_id = ss.subject_id AND v.scholar_user_id = ss.scholar_user_id
-    ORDER BY v.approved ASC, v.created_at DESC
-  `),
+    WHERE ${sort.where} ORDER BY ${sort.order} LIMIT ?
+  `, [...sort.args,page.limit+1]);},
 
   findBySubjectWithDetails: (subjectId) => pool.query(`
     SELECT 
@@ -91,7 +92,7 @@ const VideoModel = {
 
   findBySubject: (subjectId) => pool.query("SELECT * FROM videos WHERE subject_id = ? ORDER BY sequence_index", [subjectId]),
 
-  findByScholar: (scholarId) => pool.query("SELECT * FROM videos WHERE scholar_user_id = ? ORDER BY created_at DESC", [scholarId]),
+  findByScholar: (scholarId,page={before:2147483647,limit:100}) => {page={...page,kind:"created"};const sort=orderedClause(page);return readQuery(pool,"SELECT *, "+sort.select+" FROM videos WHERE scholar_user_id = ? AND "+sort.where+" ORDER BY "+sort.order+" LIMIT ?", [scholarId,...sort.args,page.limit+1]);},
 
   countByScholarAndSubject: (scholarId, subjectId) => pool.query(
     "SELECT COUNT(*) as count FROM videos WHERE scholar_user_id = ? AND subject_id = ?",

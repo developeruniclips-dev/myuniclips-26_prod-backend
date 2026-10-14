@@ -23,7 +23,7 @@ const hashPassword = async (password) => {
     try {
         return await argon2.hash(password, ARGON2_OPTIONS);
     } catch (error) {
-        console.error('Error hashing password with Argon2:', error);
+        require('../utils/safeLogging').logError('Error hashing password with Argon2:', error);
         throw new Error('Failed to hash password');
     }
 };
@@ -53,7 +53,7 @@ const verifyPassword = async (password, hash) => {
             return { valid: false, needsRehash: false };
         }
     } catch (error) {
-        console.error('Error verifying password:', error);
+        require('../utils/safeLogging').logError('Error verifying password:', error);
         return { valid: false, needsRehash: false };
     }
 };

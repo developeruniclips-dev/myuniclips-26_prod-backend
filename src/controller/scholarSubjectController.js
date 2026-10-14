@@ -27,7 +27,7 @@ const requestSubject = async(req, res) => {
 
             res.json({ message: "Subject request sent" });
     } catch (error) {
-        console.error("Error requesting subjects", error);
+        require('../utils/safeLogging').logError("Error requesting subjects", error);
         res.status(500).json({message: "Server error requesting subjects", error});
     }
 };
@@ -40,7 +40,7 @@ const approveSubject = async(req, res) => {
 
             res.json({ message: "Subject approved" });
     } catch (error) {
-        console.error("Error approving subject", error);
+        require('../utils/safeLogging').logError("Error approving subject", error);
         res.status(500).json({message: "Server error approving subject", error});
     }
 };
@@ -55,7 +55,7 @@ const approveSubjectById = async(req, res) => {
 
         res.json({ message: "Course application approved" });
     } catch (error) {
-        console.error("Error approving course:", error);
+        require('../utils/safeLogging').logError("Error approving course:", error);
         res.status(500).json({ message: "Server error approving course", error });
     }
 };
@@ -70,7 +70,7 @@ const rejectSubjectById = async(req, res) => {
 
         res.json({ message: "Course application rejected" });
     } catch (error) {
-        console.error("Error rejecting course:", error);
+        require('../utils/safeLogging').logError("Error rejecting course:", error);
         res.status(500).json({ message: "Server error rejecting course", error });
     }
 };
@@ -110,7 +110,7 @@ const deleteSubjectByScholar = async(req, res) => {
 
         res.json({ message: "Empty course application removed" });
     } catch (error) {
-        console.error("Error deleting course:", error);
+        require('../utils/safeLogging').logError("Error deleting course:", error);
         res.status(error.status || 500).json({ message: error.status ? error.message : "Server error deleting course" });
     }
 };
@@ -123,7 +123,7 @@ const getScholarSubjectsStatus = async (req, res) => {
 
     res.json({ subjects });
   } catch (error) {
-    console.error("Error fetching subject status", error);
+    require('../utils/safeLogging').logError("Error fetching subject status", error);
     res.status(500).json({ message: "Server error fetching subject status", error });
   }
 };
@@ -140,7 +140,7 @@ const getAllScholarSubjects = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Error fetching subjects", error);
+        require('../utils/safeLogging').logError("Error fetching subjects", error);
         return res.status(500).json({
             message: "Server error fetching subjects",
             error
@@ -178,7 +178,7 @@ const getAllScholarSubjectsAdmin = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Error fetching all subjects", error);
+        require('../utils/safeLogging').logError("Error fetching all subjects", error);
         return res.status(500).json({
             message: "Server error fetching all subjects",
             error
