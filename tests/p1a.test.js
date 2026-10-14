@@ -52,7 +52,8 @@ function load(file, overrides = {}) {
       if (Object.hasOwn(overrides, name)) return overrides[name];
       if (name === '../utils/userResponses') return { userResponse, scholarProfileResponse };
       if (['../utils/safeLogging', './safeLogging'].includes(name)) return { logError: (event, error) => logError(event, error, logger) };
-      if (name === '../utils/authSecurity') return S;
+      if (['../utils/authSecurity', './authSecurity'].includes(name)) return S;
+      if (name === 'node:url') return require(name);
       if (['bcryptjs','crypto','node:crypto','jsonwebtoken'].includes(name)) return require(name);
       throw Error('Unexpected dependency: ' + name);
     }
