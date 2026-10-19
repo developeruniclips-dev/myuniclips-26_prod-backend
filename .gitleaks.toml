@@ -1,0 +1,10 @@
+title = "UniClips J1 indexed-content policy"
+[extend]
+useDefault = true
+
+[[rules]]
+id = "uniclips-sensitive-assignment"
+description = "Review hardcoded UniClips credential assignments, including low entropy values"
+regex = '''(?i)(?:jwt_secret|db_pass|email_password|vimeo_access_token|stripe_secret_key|stripe_webhook_secret|super_admin_secret_key)["']?[ \t]*[:=][ \t]*["']?([A-Za-z0-9_+/.=:@!-]{12,})'''
+secretGroup = 1
+keywords = ["jwt_secret", "db_pass", "email_password", "vimeo_access_token", "stripe_secret_key", "stripe_webhook_secret", "super_admin_secret_key"]

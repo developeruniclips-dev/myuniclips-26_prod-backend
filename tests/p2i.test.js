@@ -202,7 +202,14 @@ test('oversized v2 files require explicit recovery instead of silent evidence de
  finally{assert.ok(folder.startsWith(path.join(os.tmpdir(),'uniclips-p2i-log-')));await fs.promises.rm(folder,{recursive:true});}
 });
 test('new access-log segments rotate on UTC-day change without unbounded history',async()=>{
- const folder=await fs.promises.mkdtemp(path.join(os.tmpdir(),'uniclips-p2i-log-'));
- try{let clock=Date.now();const stream=createBoundedAccessLog(folder,{now:()=>clock});stream.write('first\n');while(stream.status().queuedBytes)await new Promise(r=>setImmediate(r));await new Promise(r=>setTimeout(r,10));clock+=86400000;stream.write('second\n');await stream.end();assert.equal(await fs.promises.readFile(path.join(folder,'access-v2.log.1'),'utf8'),'first\n');assert.equal(await fs.promises.readFile(path.join(folder,'access-v2.log'),'utf8'),'second\n');}
- finally{assert.ok(folder.startsWith(path.join(os.tmpdir(),'uniclips-p2i-log-')));await fs.promises.rm(folder,{recursive:true});}
+ const folder=await fs.promises.mkdtemp(path.join(os.tmpdir(),'uniclips-p2i-log-'));let stream,appended;
+ // Queue-empty precedes append completion. Hold append explicitly so filesystem
+ // timing cannot advance the synthetic day while the first write is pending.
+ let finishFirst,releaseFirst;const firstDone=new Promise(r=>finishFirst=r),firstMayFinish=new Promise(r=>releaseFirst=r);let writes=0;
+ try{let clock=Date.now();const io={...fs.promises,async appendFile(...args){if(++writes===1)await firstMayFinish;await fs.promises.appendFile(...args);if(writes===1)finishFirst();}};
+  stream=createBoundedAccessLog(folder,{now:()=>clock,io});stream.write('first\n');releaseFirst();await firstDone;
+  // The continuation after append must also update the logger's bookkeeping.
+  await new Promise(r=>setImmediate(r));clock+=86400000;stream.write('second\n');await stream.end();
+  assert.equal(stream.status().unavailable,false);assert.equal(await fs.promises.readFile(path.join(folder,'access-v2.log.1'),'utf8'),'first\n');assert.equal(await fs.promises.readFile(path.join(folder,'access-v2.log'),'utf8'),'second\n');
+ }finally{releaseFirst();if(stream)await stream.end();assert.ok(folder.startsWith(path.join(os.tmpdir(),'uniclips-p2i-log-')));await fs.promises.rm(folder,{recursive:true});}
 });

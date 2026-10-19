@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+allowlist=$(git config --get uniclips.security.allowlist) || { printf '%s\n' 'P2J_ALLOWLIST_REQUIRED' >&2; exit 1; }
+scanner=$(git config --get uniclips.security.scanner) || { printf '%s\n' 'P2J_SCANNER_REQUIRED' >&2; exit 1; }
+exec env -u NODE_OPTIONS -u NODE_DEBUG -u DEBUG node scripts/security/check-staged.cjs --allowlist "$allowlist" --scanner "$scanner"
