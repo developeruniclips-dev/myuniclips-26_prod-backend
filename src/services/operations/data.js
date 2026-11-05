@@ -1,13 +1,15 @@
+const {admittedRead,readBounded}=require('../../utils/readCapacity');
 const {fail,id,page,optional}=require('./common');
 const roleSql="(SELECT GROUP_CONCAT(r.name ORDER BY r.name) FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=u.id)";
 async function paginate(db,select,from,args,query,order='id DESC') {
-    const paging=page(query);const [[count]]=await db.query(`SELECT COUNT(*) AS total ${from}`,args);
-    const [rows]=await db.query(`SELECT ${select} ${from} ORDER BY ${order} LIMIT ? OFFSET ?`,[...args,paging.limit,paging.offset]);
+    const paging=page(query);const [[count]]=await admittedRead(db,`SELECT COUNT(*) AS total ${from}`,args);
+    const [rows]=await admittedRead(db,`SELECT ${select} ${from} ORDER BY ${order} LIMIT ? OFFSET ?`,[...args,paging.limit,paging.offset]);
     return{rows,total:Number(count.total),...paging};
 }
 function createData(pool) {
+    const optionalRead=(sql,args=[])=>optional({query:(text,values)=>admittedRead(pool,text,values)},sql,args);
     async function overview() {
-        const [[counts]]=await pool.query(`SELECT (SELECT COUNT(*) FROM users) AS users,
+        const [[counts]]=await admittedRead(pool,`SELECT (SELECT COUNT(*) FROM users) AS users,
             (SELECT COUNT(DISTINCT ur.user_id) FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE r.name='Learner') AS learners,
             (SELECT COUNT(*) FROM scholar_profile WHERE approved=1) AS scholars,
             (SELECT COUNT(*) FROM scholar_profile WHERE approved=0) AS scholarApplications,
@@ -18,9 +20,9 @@ function createData(pool) {
             (SELECT COUNT(*) FROM universities) AS academicUniversities,
             (SELECT COUNT(*) FROM subject_purchases) AS coursePurchases,
             (SELECT COUNT(*) FROM users WHERE university_id IS NULL) AS unassignedUsers`);
-        const support=await optional(pool,"SELECT COUNT(*) AS count FROM support_cases WHERE status!='RESOLVED'");
-        const escalations=await optional(pool,"SELECT COUNT(*) AS count FROM admin_escalations WHERE status!='RESOLVED'");
-        const [revenue]=await pool.query(`SELECT UPPER(currency) AS currency,SUM(amount) AS amount
+        const support=await optionalRead("SELECT COUNT(*) AS count FROM support_cases WHERE status!='RESOLVED'");
+        const escalations=await optionalRead("SELECT COUNT(*) AS count FROM admin_escalations WHERE status!='RESOLVED'");
+        const [revenue]=await readBounded(pool,`SELECT UPPER(currency) AS currency,SUM(amount) AS amount
             FROM subject_purchases GROUP BY UPPER(currency)`);
         return {...counts,openSupport:support?Number(support[0].count):null,openEscalations:escalations?Number(escalations[0].count):null,revenue,
             operationsAvailable:!!support&&!!escalations,
@@ -37,7 +39,7 @@ function createData(pool) {
             `FROM users u LEFT JOIN universities uni ON uni.id=u.university_id WHERE ${where.join(' AND ')}`,args,query,'u.id DESC');
     }
     async function person(userId,section,query={}) {
-        const target=id(userId);const [[person]]=await pool.query(`SELECT u.id,u.fname,u.lname,u.email,u.created_at,u.avatar_id,u.degree_programme,u.university_id,
+        const target=id(userId);const [[person]]=await admittedRead(pool,`SELECT u.id,u.fname,u.lname,u.email,u.created_at,u.avatar_id,u.degree_programme,u.university_id,
             uni.name AS university,${roleSql} AS roles FROM users u LEFT JOIN universities uni ON uni.id=u.university_id WHERE u.id=?`,[target]);
         if(!person)fail(404,'Person not found');
         if(section==='learning') return paginate(pool,`sp.id,s.name AS course,sp.subject_id,sp.scholar_id,sp.created_at,sp.access_expires_at,
@@ -48,13 +50,13 @@ function createData(pool) {
             'FROM subject_purchases sp LEFT JOIN subjects s ON s.id=sp.subject_id WHERE sp.buyer_user_id=?',[target],query,'sp.id DESC');
         if(section==='purchases')return transactions({...query,userId:target});
         if(section==='scholar'){
-            const [application]=await pool.query('SELECT id,user_id,university,degree,year,approved,created_at,task_card_url FROM scholar_profile WHERE user_id=?',[target]);
+            const [application]=await admittedRead(pool,'SELECT id,user_id,university,degree,year,approved,created_at,task_card_url FROM scholar_profile WHERE user_id=?',[target]);
             const courses=await paginate(pool,'ss.id,ss.subject_id,s.name AS course,ss.degree,ss.expertise,ss.approved,ss.created_at',
                 'FROM scholar_subjects ss LEFT JOIN subjects s ON s.id=ss.subject_id WHERE ss.scholar_user_id=?',[target],query,'ss.id DESC');
-            const [content]=await pool.query('SELECT approved,COUNT(*) AS count FROM videos WHERE scholar_user_id=? GROUP BY approved',[target]);
+            const [content]=await admittedRead(pool,'SELECT approved,COUNT(*) AS count FROM videos WHERE scholar_user_id=? GROUP BY approved',[target]);
             return{application:application[0]||null,courses,content};
         }
-        const [[scholar]]=await pool.query('SELECT approved,university,degree,created_at FROM scholar_profile WHERE user_id=?',[target]);
+        const [[scholar]]=await admittedRead(pool,'SELECT approved,university,degree,created_at FROM scholar_profile WHERE user_id=?',[target]);
         return{...person,scholar:scholar||null,accountStatus:'Registered account',suspensionAvailable:false};
     }
     const queueDefinitions={
@@ -74,7 +76,7 @@ function createData(pool) {
         return paginate(pool,`${d.fields},u.fname,u.lname,u.email${videoCounts}`, `FROM ${d.table} JOIN users u ON u.id=${d.user} WHERE ${where.join(' AND ')}`,args,query,'q.id DESC');
     }
     async function transactions(query) {
-        const ready=await optional(pool,'SELECT id FROM payment_orders LIMIT 0');
+        const ready=await optionalRead('SELECT id FROM payment_orders LIMIT 0');
         const legacy=`SELECT CONVERT(CONCAT('bundle-',sp.id) USING utf8mb4) COLLATE utf8mb4_unicode_ci AS reference,sp.buyer_user_id AS user_id,sp.subject_id,sp.scholar_id,sp.amount,UPPER(CONVERT(sp.currency USING utf8mb4)) COLLATE utf8mb4_unicode_ci AS currency,
             _utf8mb4'legacy' COLLATE utf8mb4_unicode_ci AS provider,_utf8mb4'Recorded course purchase' COLLATE utf8mb4_unicode_ci AS status,sp.created_at,sp.access_expires_at,sp.is_access_active AND (sp.access_expires_at IS NULL OR sp.access_expires_at>NOW()) AS active
             FROM subject_purchases sp ${ready?'WHERE NOT EXISTS (SELECT 1 FROM payment_orders o WHERE o.purchase_id=sp.id)':''}
@@ -90,7 +92,7 @@ function createData(pool) {
             message:!ready?'Payment Phase 2A is not migrated. Legacy transactions remain available.':null};
     }
     async function universities() {
-        const [rows]=await pool.query(`SELECT uni.id,uni.name,uni.short_name,c.name AS country,
+        const [rows]=await readBounded(pool,`SELECT uni.id,uni.name,uni.short_name,c.name AS country,
             (SELECT COUNT(*) FROM users u WHERE u.university_id=uni.id) AS users,
             (SELECT COUNT(*) FROM scholar_profile p WHERE p.approved=1 AND (CONVERT(p.university USING utf8mb4) COLLATE utf8mb4_unicode_ci=uni.name OR CONVERT(p.university USING utf8mb4) COLLATE utf8mb4_unicode_ci=CONCAT(uni.name,' (',uni.short_name,')'))) AS scholars,
             (SELECT COUNT(*) FROM scholar_profile p WHERE p.approved=0 AND (CONVERT(p.university USING utf8mb4) COLLATE utf8mb4_unicode_ci=uni.name OR CONVERT(p.university USING utf8mb4) COLLATE utf8mb4_unicode_ci=CONCAT(uni.name,' (',uni.short_name,')'))) +
@@ -99,7 +101,7 @@ function createData(pool) {
             (SELECT COUNT(*) FROM subjects s WHERE s.university_id=uni.id) AS courseEntries,
             (SELECT COUNT(DISTINCT s.degree_programmes) FROM subjects s WHERE s.university_id=uni.id) AS programmes
             FROM universities uni JOIN countries c ON c.id=uni.country_id ORDER BY c.name,uni.name`);
-        const support=await optional(pool,`SELECT u.university_id,COUNT(*) AS count FROM support_cases c JOIN users u ON u.id=c.user_id WHERE c.status!='RESOLVED' GROUP BY u.university_id`);
+        const support=await optional({query:(sql,args)=>readBounded(pool,sql,args)},`SELECT u.university_id,COUNT(*) AS count FROM support_cases c JOIN users u ON u.id=c.user_id WHERE c.status!='RESOLVED' GROUP BY u.university_id`);
         for(const row of rows)row.openSupport=support?Number(support.find(s=>Number(s.university_id)===Number(row.id))?.count||0):null;
         return rows;
     }
@@ -121,9 +123,9 @@ function createData(pool) {
     }
     async function finance(query) {
         if(query.view==='legacy')return paginate(pool,"p.id,p.amount,p.currency,p.status,p.created_at,p.stripe_transfer_id,CONCAT(u.fname,' ',u.lname) AS scholar",'FROM scholar_payouts p LEFT JOIN users u ON u.id=p.scholar_user_id',[],query,'p.id DESC');
-        const ready=(await optional(pool,'SELECT id FROM payment_orders LIMIT 0')) &&
-            (await optional(pool,'SELECT order_id FROM payment_allocations LIMIT 0')) &&
-            (await optional(pool,'SELECT order_id FROM payment_transfers LIMIT 0'));
+        const ready=(await optionalRead('SELECT id FROM payment_orders LIMIT 0')) &&
+            (await optionalRead('SELECT order_id FROM payment_allocations LIMIT 0')) &&
+            (await optionalRead('SELECT order_id FROM payment_transfers LIMIT 0'));
         if(!ready)return{available:false,rows:[],total:0,message:'Payment Phase 2A is not migrated. Legacy transactions remain available; new allocations cannot be released here.'};
         if(query.view==='review')return {available:true,...await paginate(pool,'o.id,o.state,o.currency,o.amount_minor,o.refund_state,o.dispute_state,o.created_at,t.state AS transfer_state,t.error_code',
             "FROM payment_orders o LEFT JOIN payment_transfers t ON t.order_id=o.id WHERE o.state='review_required' OR o.refund_state!='none' OR o.dispute_state!='none' OR t.state IN ('failed','uncertain')",[],query,'o.created_at DESC')};

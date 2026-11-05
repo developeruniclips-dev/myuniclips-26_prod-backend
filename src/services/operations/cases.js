@@ -1,3 +1,4 @@
+const {admittedRead}=require('../../utils/readCapacity');
 const {fail,staff,owner,text,id,page,tx,audit,optional}=require('./common');
 const categories=['Payment','Course Access','Account','Scholar','Course/Content','Technical','Other'];
 const escalationCategories=['Payment/Refund','Suspicious Activity','User Deletion','Permissions','Scholar','Technical','Financial Discrepancy','Content/Legal','Other'];
@@ -11,8 +12,8 @@ function createCases(pool) {
     async function list(actor,kind,query) {
         const escalation=kind==='escalations';if(escalation&&!staff(actor))fail(403,'Administrative access required');
         const table=escalation?'admin_escalations':'support_cases', creator=escalation?'created_by':'user_id', title=escalation?'title':'subject';
-        const ready=(await optional(pool,`SELECT id FROM ${table} LIMIT 0`))&&
-            (await optional(pool,`SELECT id FROM ${escalation?'escalation_messages':'support_messages'} LIMIT 0`));
+        const ready=(await optional({query:(sql,args)=>admittedRead(pool,sql,args)},`SELECT id FROM ${table} LIMIT 0`))&&
+            (await optional({query:(sql,args)=>admittedRead(pool,sql,args)},`SELECT id FROM ${escalation?'escalation_messages':'support_messages'} LIMIT 0`));
         if(!ready)return{available:false,rows:[],total:null,message:'This feature will become available after the operations migration.'};
         const where=['1=1'],args=[];const paging=page(query);
         if(escalation?!owner(actor):!staff(actor)){where.push(`c.${creator}=?`);args.push(actor.id);}
@@ -21,18 +22,18 @@ function createCases(pool) {
         if(query.category){where.push('c.category=?');args.push(query.category);}
         if(query.q){where.push(`(c.${title} LIKE ? OR CONCAT('${escalation?'UE':'UC'}-',c.id+1000) LIKE ? OR u.email LIKE ?)`);args.push(...Array(3).fill(`%${String(query.q).slice(0,120)}%`));}
         const from=`FROM ${table} c LEFT JOIN users u ON u.id=c.${creator} WHERE ${where.join(' AND ')}`;
-        const [[count]]=await pool.query(`SELECT COUNT(*) AS total ${from}`,args);
-        const [rows]=await pool.query(`SELECT c.*,CONCAT(u.fname,' ',u.lname) AS person_name,CONCAT('${escalation?'UE':'UC'}-',c.id+1000) AS reference ${from} ORDER BY c.id DESC LIMIT ? OFFSET ?`,[...args,paging.limit,paging.offset]);
+        const [[count]]=await admittedRead(pool,`SELECT COUNT(*) AS total ${from}`,args);
+        const [rows]=await admittedRead(pool,`SELECT c.*,CONCAT(u.fname,' ',u.lname) AS person_name,CONCAT('${escalation?'UE':'UC'}-',c.id+1000) AS reference ${from} ORDER BY c.id DESC LIMIT ? OFFSET ?`,[...args,paging.limit,paging.offset]);
         return {rows,total:Number(count.total),...paging};
     }
     async function detail(actor,kind,caseId,query={}) {
-        const row=await accessible(pool,actor,kind,caseId);const escalation=kind==='escalations';const pagingLimit=50;
-        const [messages]=await pool.query(`SELECT m.id,m.actor_id,m.body,m.created_at${escalation?'':',m.internal'},CONCAT(u.fname,' ',u.lname) AS author
+        const row=await accessible({query:(sql,args)=>admittedRead(pool,sql,args)},actor,kind,caseId);const escalation=kind==='escalations';const pagingLimit=50;
+        const [messages]=await admittedRead(pool,`SELECT m.id,m.actor_id,m.body,m.created_at${escalation?'':',m.internal'},CONCAT(u.fname,' ',u.lname) AS author
             FROM ${escalation?'escalation_messages':'support_messages'} m LEFT JOIN users u ON u.id=m.actor_id
             WHERE m.${escalation?'escalation_id':'case_id'}=? ${!escalation&&!staff(actor)?'AND m.internal=0':''} ${query.before?'AND m.id<?':''} ORDER BY m.id DESC LIMIT ?`,[row.id,...(query.before?[id(query.before)]:[]),pagingLimit+1]);
         const hasMore=messages.length>pagingLimit;if(hasMore)messages.pop();
         const assignee=escalation?row.handled_by:row.assigned_to;
-        const [[assigned]]=await pool.query("SELECT CONCAT(fname,' ',lname) AS name FROM users WHERE id=?",[assignee||0]);
+        const [[assigned]]=await admittedRead(pool,"SELECT CONCAT(fname,' ',lname) AS name FROM users WHERE id=?",[assignee||0]);
         return {...row,reference:`${escalation?'UE':'UC'}-${row.id+1000}`,assigned_name:assigned?.name||null,messages:messages.reverse(),hasMore};
     }
     async function create(actor,kind,body) {

@@ -6,7 +6,12 @@ function text(value,label,max=4000) {
     return value.trim();
 }
 function id(value) { const n=Number(value);if(!Number.isSafeInteger(n)||n<1)fail(400,'Invalid identifier');return n; }
-function page(query={}) { const limit=Math.min(50,Math.max(1,parseInt(query.limit)||20));const number=Math.min(1000000,Math.max(1,parseInt(query.page)||1));return{limit,page:number,offset:(number-1)*limit}; }
+function page(query={}) {
+    const positive=(value,fallback)=>{if(value===undefined)return fallback;const n=Number(value);if(!((typeof value==='string'&&/^[1-9]\d*$/.test(value))||(typeof value==='number'&&Number.isSafeInteger(value)))||!Number.isSafeInteger(n)||n<1)fail(400,'Invalid pagination');return n;};
+    const limit=Math.min(50,positive(query.limit,20)),number=positive(query.page,1),offset=(number-1)*limit;
+    if(!Number.isSafeInteger(offset)||offset>10000)fail(400,'Pagination offset exceeds the supported range');
+    return{limit,page:number,offset};
+}
 async function tx(pool,work) { const db=await pool.getConnection();try{await db.beginTransaction();const value=await work(db);await db.commit();return value;}catch(e){await db.rollback();throw e;}finally{db.release();} }
 async function audit(db,actor,action,type,target,details={}) {
     // Callers supply a safe allowlist of metadata, never arbitrary request bodies.

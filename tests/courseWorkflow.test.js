@@ -2,10 +2,10 @@
 const test=require('node:test'),assert=require('node:assert/strict'),mysql=require('mysql2/promise'),fs=require('node:fs'),path=require('node:path'),express=require('express'),jwt=require('jsonwebtoken');
 if(process.env.COURSE_WORKFLOW_ISOLATED_TEST!=='1')throw Error('Explicit local workflow fixture required');
 require('../src/utils/uploadBarrier').shared.resume(); // Explicit isolated fixture admission.
-process.env.JWT_SECRET='COURSE_WORKFLOW_SYNTHETIC';process.env.ADMIN_IP_WHITELIST_ENABLED='false';
+process.env.JWT_SECRET=require('node:crypto').randomBytes(32).toString('hex');process.env.ADMIN_IP_WHITELIST_ENABLED='false';
 let actual,pool,service,server,base,providerMode={},providerAdapter,connections=0,providerState='READY',blockReady,releaseReady,providerReads=0,failAudit=false,queries=[];
 const inject=(file,value)=>{const f=require.resolve(file);require.cache[f]={id:f,filename:f,loaded:true,exports:value};};
-function instrument(db,isConnection=false){return new Proxy(db,{get(t,k){if(k==='query')return async(sql,args)=>{assert.doesNotMatch(sql,/\b(CREATE|ALTER|DROP|TRUNCATE)\b/i);queries.push(sql);if(failAudit&&sql.startsWith('INSERT INTO admin_activity_log'))throw Error('SYNTHETIC_PRIVATE_ERROR');return t.query(sql,args);};if(k==='getConnection')return async()=>{connections++;return instrument(await t.getConnection(),true);};if(k==='release'&&isConnection)return()=>{connections--;t.release();};const value=t[k];return typeof value==='function'?value.bind(t):value;}});}
+function instrument(db,isConnection=false){return new Proxy(db,{get(t,k){if(k==='query')return async(sql,args)=>{const text=typeof sql==='string'?sql:sql.sql;assert.doesNotMatch(text,/\b(CREATE|ALTER|DROP|TRUNCATE)\b/i);queries.push(text);if(failAudit&&text.startsWith('INSERT INTO admin_activity_log'))throw Error('SYNTHETIC_PRIVATE_ERROR');return t.query(sql,args);};if(k==='getConnection')return async()=>{connections++;return instrument(await t.getConnection(),true);};if(['release','destroy'].includes(k)&&isConnection)return()=>{connections--;t[k]();};const value=t[k];return typeof value==='function'?value.bind(t):value;}});}
 const readiness={async read(){providerReads++;assert.equal(connections,0,'No DB connection may wait for provider readiness');if(blockReady){blockReady=false;await new Promise(r=>releaseReady=r);}return {state:providerState,policyVerified:providerState==='READY'};}};
 const actor=id=>({id,roles:['SuperAdmin']});
 async function state(){return (await actual.query('SELECT * FROM course_workflows WHERE offering_id=1'))[0][0];}

@@ -1,3 +1,4 @@
+const {readBounded}=require('../utils/readCapacity');
 const { pool } = require("../config/db");
 
 const ScholarSubjectModel = {
@@ -31,7 +32,7 @@ const ScholarSubjectModel = {
     }, 
 
     getScholarSubjectsStatus: (scholar_user_id) => {
-        return pool.query(
+        return readBounded(pool,
             `SELECT 
                 ss.id,
                 ss.subject_id, 
@@ -48,16 +49,16 @@ const ScholarSubjectModel = {
             LEFT JOIN course_workflows cw ON cw.offering_id=ss.id
             LEFT JOIN (
                 SELECT subject_id, scholar_id, COUNT(*) as sales_count, SUM(amount) as total_revenue
-                FROM subject_purchases
+                FROM subject_purchases WHERE scholar_id = ?
                 GROUP BY subject_id, scholar_id
             ) sp_stats ON ss.subject_id = sp_stats.subject_id AND ss.scholar_user_id = sp_stats.scholar_id
             WHERE ss.scholar_user_id = ?`,
-            [scholar_user_id]
+            [scholar_user_id,scholar_user_id]
         );
     },
 
     getAllScholarSubjects: (scholar_user_id) => {
-        return pool.query(
+        return readBounded(pool,
             "SELECT * FROM scholar_subjects WHERE scholar_user_id = ? ORDER BY created_at DESC",
             [scholar_user_id]
         );

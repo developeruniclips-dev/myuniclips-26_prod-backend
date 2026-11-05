@@ -1,3 +1,4 @@
+const {readBounded,readFailure}=require('../utils/readCapacity');
 const { PurchaseModel } = require("../models/purchases");
 const { pool } = require("../config/db");
 const { annotateCourses } = require('../utils/generalCourses');
@@ -64,7 +65,7 @@ const getMySubjectPurchases = async (req, res) => {
     });
   } catch (err) {
     require('../utils/safeLogging').logError("Error fetching subject purchases:", err);
-    res.status(500).json({ message: "Server error" });
+    readFailure(res,err,"Server error");
   }
 };
 
@@ -90,9 +91,7 @@ const getUserPurchases = async (req, res) => {
 
   } catch (err) {
     require('../utils/safeLogging').logError("Error fetching user purchases:", err);
-    return res.status(500).json({
-      message: "Server error fetching purchases"
-    });
+    return readFailure(res,err,"Server error fetching purchases");
   }
 };
 
@@ -104,7 +103,7 @@ const getAllTransactions = async (req, res) => {
     const { pool } = require("../config/db");
     
     // Get individual video purchases (legacy)
-    const [videoPurchases] = await pool.query(`
+    const [videoPurchases] = await readBounded(pool,`
       SELECT 
         t.id as transaction_id,
         t.provider,
@@ -134,7 +133,7 @@ const getAllTransactions = async (req, res) => {
     `);
 
     // Get course bundle purchases
-    const [bundlePurchases] = await pool.query(`
+    const [bundlePurchases] = await readBounded(pool,`
       SELECT 
         sp.id as transaction_id,
         'stripe' as provider,
@@ -160,7 +159,7 @@ const getAllTransactions = async (req, res) => {
       JOIN users scholar ON sp.scholar_id = scholar.id
       JOIN subjects subj ON sp.subject_id = subj.id
       ORDER BY sp.created_at DESC
-    `);
+    `, [], 10000-videoPurchases.length);
 
     // Combine and sort by date
     const allTransactions = [...videoPurchases, ...bundlePurchases].sort(
@@ -174,7 +173,7 @@ const getAllTransactions = async (req, res) => {
 
   } catch (err) {
     require('../utils/safeLogging').logError("Error fetching transactions:", err);
-    res.status(500).json({ message: "Server error fetching transactions" });
+    readFailure(res,err,"Server error fetching transactions");
   }
 };
 

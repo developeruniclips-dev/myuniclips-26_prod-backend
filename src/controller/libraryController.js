@@ -169,7 +169,8 @@ const getCourseProgress = async (req, res) => {
 
     // Get all videos for this course
     await access.course(req.user,subjectId,scholarId);
-    const [videos] = await pool.query(`
+    await libraryReads.run(userId,async()=>{
+    const [videos] = await readQuery(pool,`
       SELECT id FROM videos
       WHERE subject_id = ? AND scholar_user_id = ? AND approved = 1 LIMIT 201
     `, [subjectId, scholarId]);
@@ -180,7 +181,7 @@ const getCourseProgress = async (req, res) => {
     }
 
     // Get progress
-    const [progress] = await pool.query(`
+    const [progress] = await readQuery(pool,`
       SELECT video_id, watched, watched_at
       FROM video_progress
       WHERE user_id = ? AND video_id IN (?)
@@ -194,6 +195,7 @@ const getCourseProgress = async (req, res) => {
       totalVideos: videos.length,
       watchedVideos,
       progressPercent
+    });
     });
   } catch (error) {
     safeFailure(res,error);

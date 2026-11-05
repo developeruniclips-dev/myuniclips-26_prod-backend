@@ -1,3 +1,4 @@
+const {readBounded,readFailure}=require('../utils/readCapacity');
 const { pool } = require("../config/db");
 const { logError } = require('../utils/safeLogging');
 const { scholarProfileResponse } = require('../utils/userResponses');
@@ -5,7 +6,7 @@ const { scholarProfileResponse } = require('../utils/userResponses');
 // Get all scholar profile applications for admin
 const getAllScholarApplications = async (req, res) => {
   try {
-    const [applications] = await pool.query(`
+    const [applications] = await readBounded(pool,`
       SELECT 
         sp.id as application_id,
         sp.user_id,
@@ -33,9 +34,7 @@ const getAllScholarApplications = async (req, res) => {
 
   } catch (error) {
     logError("Error fetching scholar applications:", error);
-    res.status(500).json({
-      message: "Server error fetching scholar applications"
-    });
+    readFailure(res,error,"Server error fetching scholar applications");
   }
 };
 

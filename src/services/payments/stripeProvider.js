@@ -29,9 +29,7 @@ function createStripeProvider(stripe, frontendUrl) {
         },
         retrieveAccount: id => stripe.accounts.retrieve(id),
         async findTransfers(orderId) {
-            const matches = [];
-            for await (const transfer of stripe.transfers.list({ transfer_group: `order_${orderId}`, limit: 100 })) matches.push(transfer);
-            return matches;
+            return require('./boundedTransfers').findBoundedTransfers(stripe, `order_${orderId}`);
         },
         createTransfer: (order, transfer) => stripe.transfers.create({ amount: Number(transfer.amount_minor),
             currency: transfer.currency.toLowerCase(), destination: transfer.destination_account,

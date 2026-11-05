@@ -35,6 +35,13 @@ async function readQuery(db,sql,args=[]){
  catch(error){failed=true;if(connection!==db)connection?.destroy?.();if(error.message==='Queue limit reached.'||error.code==='PROTOCOL_SEQUENCE_TIMEOUT')throw unavailable();throw error;}
  finally{if(connection&&connection!==db&&!failed)connection.release();}
 }
+async function admittedRead(db,sql,args=[]){
+ return catalogueReads.run(null,()=>readQuery(db,sql,args));
+}
+function readFailure(res,error,message,extra={}){
+ const controlled=["READ_CAPACITY_UNAVAILABLE","READ_RESULTS_UNAVAILABLE"].includes(error?.code);
+ return res.status(controlled?503:500).json({...extra,message:controlled?"Read service is temporarily unavailable":message,...(controlled?{code:error.code}:{})});
+}
 async function readBounded(db,sql,args=[],maxRows=10000){
  return catalogueReads.run(null,async()=>{
   const result=await readQuery(db,sql.replace(/;\s*$/,"")+" LIMIT "+(maxRows+1),args);
@@ -45,7 +52,7 @@ async function readBounded(db,sql,args=[],maxRows=10000){
 function requireExplicitPage(query,pagination){
  if(query?.limit===undefined&&pagination.hasMore)throw Object.assign(new Error("Please refresh the application to load the complete collection"),{status:409,code:"COLLECTION_UPDATE_REQUIRED"});
 }
-module.exports={orderedPageInput,orderedClause,requireExplicitPage,readBounded,createReadBudget,mapBounded,pageInput,pageRows,readQuery,catalogueReads,libraryReads};
+module.exports={admittedRead,readFailure,orderedPageInput,orderedClause,requireExplicitPage,readBounded,createReadBudget,mapBounded,pageInput,pageRows,readQuery,catalogueReads,libraryReads};
 
 const ORDERS={created:'created_at',review:'created_at',saved:'added_at'};
 function orderedPageInput(query={},kind='created',max=100,defaultLimit=max){

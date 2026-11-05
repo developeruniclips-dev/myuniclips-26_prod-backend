@@ -1,5 +1,7 @@
 const stripe = require('../config/stripe');
 const { pool } = require('../config/db');
+const { createReadBudget, mapBounded, readQuery } = require('../utils/readCapacity');
+const scholarStatusReads = createReadBudget({ global: 2, perUser: 2 });
 const { classifyAccountError } = require('../services/payments/stripeProvider');
 
 // Helper to check if Stripe and required env vars are configured
@@ -316,8 +318,9 @@ const createPayout = async (req, res) => {
             if (currency !== 'EUR' || !req.body.scholarUserId) return res.status(409).json({ message: 'No supported authoritative allocation selected.' });
             const [rows] = await pool.query(`SELECT t.order_id,t.amount_minor FROM payment_transfers t
                 JOIN payment_orders o ON o.id=t.order_id WHERE o.scholar_id=? AND t.currency=?
-                AND t.state IN ('pending','uncertain','failed') AND o.refund_state='none' AND o.dispute_state='none'`,
+                AND t.state IN ('pending','uncertain','failed') AND o.refund_state='none' AND o.dispute_state='none' LIMIT 11`,
                 [req.body.scholarUserId,currency]);
+            if (rows.length > 10) return res.status(409).json({ message: 'Select an exact order. More than ten allocations require separate review.', code: 'PAYOUT_SELECTION_LIMIT' });
             const expected = rows.reduce((sum,row) => sum + Number(row.amount_minor),0);
             let requested;
             try { requested = toMinor(req.body.amount,currency); } catch { return res.status(400).json({ message: 'Invalid transfer amount.' }); }
@@ -339,10 +342,19 @@ const createPayout = async (req, res) => {
  */
 const getAllScholarsStripeStatus = async (req, res) => {
     try {
+        const integer = (value, fallback) => {
+            if (value === undefined) return fallback;
+            if (typeof value !== "string" || !/^[1-9]\d{0,8}$/.test(value)) throw Object.assign(new Error("Invalid pagination"), { status: 400 });
+            return Number(value);
+        };
+        const limit = integer(req.query?.limit, 25), page = integer(req.query?.page, 1);
+        if (limit > 50) return res.status(400).json({ message: "Invalid pagination" });
+        const paged = req.query?.limit !== undefined || req.query?.page !== undefined;
+        return await scholarStatusReads.run(null, async () => {
         // Try with all columns first, fall back to basic columns if they don't exist
         let scholars;
         try {
-            [scholars] = await pool.query(`
+            [scholars] = await readQuery(pool, `
                 SELECT 
                     u.id,
                     u.fname,
@@ -355,11 +367,13 @@ const getAllScholarsStripeStatus = async (req, res) => {
                 FROM users u
                 JOIN scholar_profile sp ON u.id = sp.user_id
                 WHERE sp.approved = 1
-                ORDER BY u.fname, u.lname
-            `);
+                ORDER BY u.fname, u.lname, u.id
+                LIMIT ? OFFSET ?
+            `, [limit + 1, (page - 1) * limit]);
         } catch (dbError) {
+            if (dbError.code !== 'ER_BAD_FIELD_ERROR') throw dbError;
             require('../utils/safeLogging').logError('Extended stripe columns not found, using basic query:', dbError);
-            [scholars] = await pool.query(`
+            [scholars] = await readQuery(pool, `
                 SELECT 
                     u.id,
                     u.fname,
@@ -370,9 +384,14 @@ const getAllScholarsStripeStatus = async (req, res) => {
                 FROM users u
                 JOIN scholar_profile sp ON u.id = sp.user_id
                 WHERE sp.approved = 1
-                ORDER BY u.fname, u.lname
-            `);
+                ORDER BY u.fname, u.lname, u.id
+                LIMIT ? OFFSET ?
+            `, [limit + 1, (page - 1) * limit]);
         }
+
+        const hasMore = scholars.length > limit;
+        if (!paged && hasMore) return res.status(409).json({ message: "Please request paginated scholars status to load the complete collection", code: "COLLECTION_UPDATE_REQUIRED" });
+        scholars = scholars.slice(0, limit);
 
         // Country code to name mapping
         const countryNames = {
@@ -392,8 +411,8 @@ const getAllScholarsStripeStatus = async (req, res) => {
                                  process.env.STRIPE_SECRET_KEY.startsWith('sk_');
 
         // Enrich with live Stripe data only if Stripe is configured
-        const scholarsWithStripeStatus = await Promise.all(
-            scholars.map(async (scholar) => {
+        const scholarsWithStripeStatus = await mapBounded(
+            scholars, 2, async (scholar) => {
                 const earnings = await require('../services/payments/earningsService').scholarEarnings(pool, scholar.id);
                 const pendingBalance = Number(earnings.summary.pendingBalance);
                 scholar.earningsByCurrency = earnings.summariesByCurrency;
@@ -440,15 +459,18 @@ const getAllScholarsStripeStatus = async (req, res) => {
                         pendingBalance: pendingBalance.toFixed(2)
                     };
                 }
-            })
+            }
         );
 
-        res.json({ scholars: scholarsWithStripeStatus });
+        return res.json({ scholars: scholarsWithStripeStatus, ...(paged ? { pagination: { page, limit, hasMore, nextPage: hasMore ? page + 1 : null } } : {}) });
+        });
 
     } catch (error) {
         require('../utils/safeLogging').logError('Error getting scholars Stripe status:', error);
-        res.status(500).json({ 
-            message: 'Error retrieving scholars status'
+        const controlled = ["READ_CAPACITY_UNAVAILABLE", "READ_RESULTS_UNAVAILABLE"].includes(error.code);
+        res.status(controlled ? 503 : error.status === 400 ? 400 : 500).json({
+            message: controlled ? "Scholars status is temporarily unavailable" : error.status === 400 ? "Invalid pagination" : "Error retrieving scholars status",
+            ...(controlled ? { code: error.code } : {})
         });
     }
 };

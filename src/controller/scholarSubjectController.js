@@ -1,3 +1,4 @@
+const {readBounded,readFailure}=require('../utils/readCapacity');
 const { ScholarSubjectModel } = require("../models/scholarSubjects");
 
 const requestSubject = async(req, res) => {
@@ -28,7 +29,7 @@ const requestSubject = async(req, res) => {
             res.json({ message: "Subject request sent" });
     } catch (error) {
         require('../utils/safeLogging').logError("Error requesting subjects", error);
-        res.status(500).json({message: "Server error requesting subjects", error});
+        readFailure(res,error,"Server error requesting subjects");
     }
 };
 
@@ -41,7 +42,7 @@ const approveSubject = async(req, res) => {
             res.json({ message: "Subject approved" });
     } catch (error) {
         require('../utils/safeLogging').logError("Error approving subject", error);
-        res.status(500).json({message: "Server error approving subject", error});
+        readFailure(res,error,"Server error approving subject");
     }
 };
 
@@ -56,7 +57,7 @@ const approveSubjectById = async(req, res) => {
         res.json({ message: "Course application approved" });
     } catch (error) {
         require('../utils/safeLogging').logError("Error approving course:", error);
-        res.status(500).json({ message: "Server error approving course", error });
+        readFailure(res,error,"Server error approving course");
     }
 };
 
@@ -71,7 +72,7 @@ const rejectSubjectById = async(req, res) => {
         res.json({ message: "Course application rejected" });
     } catch (error) {
         require('../utils/safeLogging').logError("Error rejecting course:", error);
-        res.status(500).json({ message: "Server error rejecting course", error });
+        readFailure(res,error,"Server error rejecting course");
     }
 };
 
@@ -124,7 +125,7 @@ const getScholarSubjectsStatus = async (req, res) => {
     res.json({ subjects });
   } catch (error) {
     require('../utils/safeLogging').logError("Error fetching subject status", error);
-    res.status(500).json({ message: "Server error fetching subject status", error });
+    readFailure(res,error,"Server error fetching subject status");
   }
 };
 
@@ -141,17 +142,14 @@ const getAllScholarSubjects = async (req, res) => {
 
     } catch (error) {
         require('../utils/safeLogging').logError("Error fetching subjects", error);
-        return res.status(500).json({
-            message: "Server error fetching subjects",
-            error
-        });
+        return readFailure(res,error,"Server error fetching subjects");
     }
 };
 
 const getAllScholarSubjectsAdmin = async (req, res) => {
     try {
         const { pool } = require("../config/db");
-        const [rows] = await pool.query(`
+        const [rows] = await readBounded(pool,`
             SELECT 
                 ss.id,
                 ss.scholar_user_id,
@@ -179,10 +177,7 @@ const getAllScholarSubjectsAdmin = async (req, res) => {
 
     } catch (error) {
         require('../utils/safeLogging').logError("Error fetching all subjects", error);
-        return res.status(500).json({
-            message: "Server error fetching all subjects",
-            error
-        });
+        return readFailure(res,error,"Server error fetching all subjects");
     }
 };
 
