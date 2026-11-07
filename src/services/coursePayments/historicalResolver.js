@@ -38,7 +38,7 @@ async function resolveHistoricalSales(db,purchases,scope){
 }
 // Explicit offline importer. No startup import, environment loading or DB creation.
 // A signed owner review AND an independently supplied source verifier are required.
-function createAuditImporter({pool,publicKey,verifyProvenance}={}){
+function createAuditImporter({pool,publicKey,verifyProvenance,validateScope}={}){
  const verifySource=require('./historicalSources').createStoredSourceVerifier({verifyProvenance});
  return async envelope=>{
  if(!pool||!publicKey||typeof verifyProvenance!=='function'||typeof envelope?.payload!=='string'||envelope.payload.length>8000000||!verify(null,Buffer.from(envelope.payload),publicKey,Buffer.from(envelope.signature||'','base64')))deny('SIGNED_AUDIT_REQUIRED');
@@ -47,6 +47,7 @@ function createAuditImporter({pool,publicKey,verifyProvenance}={}){
  const db=await pool.getConnection();let started=false,destroyed=false,pendingIsolation=false;
  try{const [[zone]]=await db.query('SELECT @@session.time_zone AS zone');if(!['UTC','+00:00'].includes(zone.zone))deny('UTC_SESSION_REQUIRED');pendingIsolation=true;await db.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');await db.beginTransaction();started=true;pendingIsolation=false;
   const [subjects]=await db.query('SELECT id FROM subjects WHERE id=? FOR UPDATE NOWAIT',[scope.subjectId]);if(subjects.length!==1)deny('INVALID_AUDIT_SCOPE');
+  if(validateScope!==undefined){if(typeof validateScope!=='function')deny('INVALID_SCOPE_VALIDATOR');if(await validateScope(db,Object.freeze({...scope}))===false)deny('INVALID_AUDIT_SCOPE');}
   const [purchases]=await db.query('SELECT * FROM subject_purchases WHERE subject_id=? AND scholar_id=? ORDER BY id LIMIT 10001',[scope.subjectId,scope.scholarId]);
   if(purchases.length!==batch.facts.length)deny('AUDIT_PURCHASE_CENSUS_MISMATCH');
   for(const p of purchases){const r=batch.facts.find(f=>Number(f.purchase_id)===Number(p.id));if(!r||r.provider_reference!==p.transaction_id||r.currency!==p.currency||integer(r.gross_minor)!==toMinor(p.amount,p.currency)||!await verifySource(db,Object.freeze({...r}),Object.freeze({...p})))deny('AUDIT_SOURCE_UNVERIFIED');}

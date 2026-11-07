@@ -13,15 +13,20 @@ Any temporary November charge still requires an explicit concrete authorization.
 
 ## 1. Operator identities and evidence
 
-Designate an approval custodian and an independent provenance reviewer, each
-with an approved Ed25519 key. This implementation never generates operational
-keys or decides who may sign. Upload only their distinct PEM **public** keys.
+The authorized owner is the single sandbox approval authority, using one approved
+Ed25519 key. This implementation never generates operational keys or decides who
+may sign. Upload only the owner's PEM **public** key. This explicitly replaces
+human independence for this temporary synthetic Test sandbox; it does not claim
+that the owner is two reviewers. Old dual-review packets are rejected.
 Keep private keys and credential files outside Git, worktrees, hosted services
 and chat. Synthetic keys in tests are not operational authorities.
 
-The custodian reviews source identity, merchant Test identity, NGN/fee settings,
-metadata and writer inventory. The independent reviewer separately checks the
-empty test schema/seed, academic relationships and absence of financial history.
+The owner reviews source identity, merchant Test identity, NGN/fee settings,
+metadata, writer inventory, empty test schema/seed, academic relationships and
+absence of financial history. Every draft request requires
+`approvalMode:"single-owner-v1"`, `ownerAuthorized:true` and `evidenceDigest`
+(SHA-256 of retained dated sanitized evidence). The signed payload retains
+these fields. A checkbox/digest does not itself prove an observation was correct.
 A signature records a decision; it cannot prove the observations were honest.
 Retain dated sanitized evidence and signed packets outside the application DB.
 
@@ -62,6 +67,7 @@ Backend (service-scoped, not shared groups):
 
 ```text
 UNICLIPS_SANDBOX=paystack-test-v1
+SANDBOX_APPROVAL_MODE=single-owner-v1
 NODE_ENV=test
 PAYMENT_ARCHITECTURE=legacy_verified
 DB_NAME=uniclipspsngsandbox
@@ -75,7 +81,6 @@ FRONTEND_URL=<F, no trailing slash>
 ALLOWED_ORIGINS=<same F>
 JWT_SECRET=<separate sandbox secret, at least 32 characters>
 PAYSTACK_NG_AUTHORITY_PUBLIC_KEY=/etc/secrets/paystack-authority-public.pem
-SANDBOX_REVIEWER_PUBLIC_KEY=/etc/secrets/paystack-reviewer-public.pem
 PAYSTACK_NG_SECRET_KEY=<private Paystack Test secret>
 PAYSTACK_NG_WEBHOOK_SECRET=<private active Test signing secret>
 PAYSTACK_NG_LIVE_CHECKOUT=disabled
@@ -132,25 +137,28 @@ Supply that JSON on stdin. Save the returned object privately as `prepared`.
 It contains Argon2id hashes, seed UUID/digest, bootstrap schema digest and source
 digest; it contains no plaintext password. Do not commit it or print it in logs.
 
-Create request `{host:<actual DB hostname>,prepared:<that object>}`. Run:
+Create request `{approvalMode:"single-owner-v1",ownerAuthorized:true,
+evidenceDigest:<SHA256 of retained owner review>,host:<actual DB hostname>,
+prepared:<that object>}`. Run:
 
 ```text
 node scripts/paystackSandboxApproval.cjs draft bootstrap bootstrap-request.json
-node scripts/paystackSandboxApproval.cjs sign-reviewed bootstrap-draft.json <custodian-private-key-file>
-node scripts/paystackSandboxApproval.cjs sign-reviewed bootstrap-draft.json <independent-reviewer-private-key-file>
+node scripts/paystackSandboxApproval.cjs sign-reviewed bootstrap-draft.json <owner-private-key-file>
 ```
 
 Save each stdout result privately; these commands do not deliver or apply it.
-Both reviewers inspect the same seed/schema/source/host and empty owned schema.
-Within five minutes, supply `{seed:prepared.seed,authorization:<custodian envelope>,
-independentReview:<reviewer envelope>}` on stdin to:
+The owner inspects the exact seed/schema/source/host and empty owned schema.
+Within five minutes, supply ONLY `{seed:prepared.seed,
+authorization:<owner envelope>}` on stdin to:
 
 ```text
 node scripts/paystackSandboxBootstrap.cjs --execute-authorized-sandbox
 ```
 
 Use the same sandbox env above, except `DB_USER=psngsandboxmigrator`, its private
-password and local approved public-key/CA paths. This command can only use the
+password and local approved owner-public-key/CA paths. Remove the obsolete
+`SANDBOX_REVIEWER_PUBLIC_KEY` variable; supplying it refuses startup/bootstrap.
+Never provide an `independentReview` field or duplicate signature. The command can only use the
 exact named test database/user and refuses a nonempty database before DDL.
 It does NOT create databases/users. DDL is not transactional. A partial failure
 requires inspection and separately approved recreation of only that owned empty
@@ -158,7 +166,7 @@ fixture; no automatic drop/resume. Seed writes share one transaction. No audit
 or fabricated paid sale is seeded.
 The successful result also contains normalized actual metadata and its digest;
 retain it privately and compare it with the later runtime challenge, after the
-independent full-definition/FK/index/CHECK review. A core validator is not a
+owner's full-definition/FK/index/CHECK review. A core validator is not a
 replacement for that review.
 
 The synthetic NG university ID 201 is explicitly labelled synthetic and unrelated
@@ -168,46 +176,55 @@ call this a zero baseline for real FUNAAB. The application pool is fixed at two
 connections/four queued acquisitions and resets/verifies session UTC on every
 lease; it never changes GLOBAL time zone/isolation.
 
-## 5. Post-boot approvals and independent zero-history review
+## 5. Post-boot owner approvals and synthetic zero history
 
 1. Read **`GET B/sandbox/challenge`** over verified HTTPS. Independently verify
    service/instance/source against Render and reviewed source, and actual schema
    metadata against the reviewed DDL. Compare metadata/schema digests. The status
    includes challenge, sequence and synthetic scope/seed digest; no secret.
 2. `draft authorization` accepts request `{challenge:<GET body>,merchantAccount,
-   callbackOrigin:F,independentlyReviewed:true,testSecretFile:<private external
+   callbackOrigin:F,approvalMode:"single-owner-v1",ownerAuthorized:true,
+   evidenceDigest:<retained review SHA256>,testSecretFile:<private external
    file>,webhookSecretFile:<private external file>}`. It reads secrets locally and
    outputs only their digests in an unsigned draft. Review fees absorbed, no
    splits, Test signing scheme `timestamped-v1` and individually approved controls
    before `sign-reviewed`. Maximum authorization life remains 24 hours.
-3. Independently inspect all five writer entry points: checkout-confirmation,
+3. The owner inspects all five writer entry points: checkout-confirmation,
    stripe-webhooks, admin-reconciliation, old-generations, workers. Record for
    each `{entryPoint,checkedAt:<epoch ms>,conclusion:"legacy-only-or-absent",
    evidenceDigest:<SHA256 of retained evidence>}`. `draft writer` takes
-   `{challenge,observations:[...]}` and refuses missing/stale observations.
+   `{challenge,observations:[...],approvalMode:"single-owner-v1",
+   ownerAuthorized:true,evidenceDigest:<retained review SHA256>}` and refuses missing/stale observations.
    Review/sign its exact output. It never discovers writers or signs automatically.
    Inventory every writer that can access this **test database**, including prior
    sandbox generations and operator tools. Production Stripe serving a different,
    inaccessible schema remains running; this is not a claim that it is stopped.
-4. `draft packet` takes `{challenge,authorization:<signed>,writer:<signed>}`.
+4. `draft packet` takes `{challenge,authorization:<signed>,writer:<signed>,
+   approvalMode:"single-owner-v1",ownerAuthorized:true,evidenceDigest:<review SHA256>}`.
    Review/sign that outer draft. POST the envelope as JSON to
    **`B/sandbox/approvals`**, with verified HTTPS, without updating Render settings.
    Receiver checks boot challenge/identity, monotonic sequence, signatures,
    source/schema/metadata, credential bindings, control authorization and roster.
    No signing private key is uploaded. All transport is bounded/rate limited.
-5. Independently inspect the manifest and empty purchase/proof/counter/order
-   census for the synthetic scope. `draft zero-audit` takes `{challenge}`; the
-   custodian reviews/signs it. `draft zero-review` takes `{challenge,audit:<signed>,
-   independentlyReviewed:true}`; the other reviewer reviews/signs it. POST
-   `{audit:<custodian envelope>,review:<reviewer envelope>}` to
-   **`B/sandbox/zero-history`**. The endpoint accepts only this seed, empty facts
-   and version 1. The unchanged importer locks/recounts and atomically imports
-   the audit. Nonzero history is never admitted through this endpoint.
+5. The owner inspects the manifest and empty financial census. `draft zero-history`
+   takes `{challenge,approvalMode:"single-owner-v1",ownerAuthorized:true,
+   evidenceDigest:<retained empty-state review SHA256>}`. Review/sign this ONE
+   draft and POST `{authorization:<owner envelope>}` to **`B/sandbox/zero-history`**.
+   The bound five-minute packet requires installed activation authorization and
+   a fresh valid writer roster. Only this seed, empty facts and review version 1
+   are accepted. Under the existing subject lock, the importer checks all fourteen
+   financial/history tables are empty BEFORE any audit write. Orders, events,
+   counters, allocations or old history refuse the zero import. Do not clear
+   records to pass this check. The new protocol rejects old two-envelope requests.
 
 All drafts use `node scripts/paystackSandboxApproval.cjs draft <kind> <request.json>`;
-all signatures use `sign-reviewed <draft.json> <external-private-key-file>`.
-Inspect every draft. A boolean or evidence filename is not independent review.
-Refresh a writer only after fresh independent observations: read challenge again,
+all signatures use `sign-reviewed <draft.json> <external-owner-private-key-file>`.
+Inspect every draft; retain the exact signed envelopes and observations externally.
+Explicit opt-in, protocol separation, owner evidence commitments and the atomic
+empty-state check supplement the unchanged TLS/grants/schema/source/writer gates.
+They cannot reproduce a second human's judgment. A compromised owner authority
+remains a residual risk; this policy is not approved for production or live mode.
+Refresh a writer only after fresh owner observations: read challenge again,
 retain the SAME authorization, draft/sign fresh writer and outer packet with the
 next sequence. No automatic signing/renewal. A changed authorization requires a
 fresh boot; old packets cannot authorize it. Writer lifetime stays five minutes.
@@ -224,7 +241,7 @@ never grant access; verify through the authenticated backend/webhook.
 Confirm exactly one entitlement with five calendar months, sale ordinal 1,
 105000-kobo held allocation, original receipt and no Stripe/payout records.
 Reverification must not extend access or initialize a second payment. After
-expiry/restart, retain pending evidence and obtain fresh independent approvals;
+expiry/restart, retain pending evidence and obtain fresh owner approvals;
 never pay again to resolve uncertainty. Stop new checkout before the roster
 expires; later verification needs a fresh valid roster. No automatic rollback,
 financial replay, refund, revocation or database reset is authorized.

@@ -32,11 +32,11 @@ function validateSeed(s){
  return s;
 }
 async function bootstrap({pool,seed,envelope,publicKey,reviewerKey,review,now=Date.now,source}={}){
- validateSeed(seed);const a=decode(envelope,publicKey),r=decode(review,reviewerKey);
+ const owner=require('./ownerPolicy');owner.ownerKey(publicKey);
+ if(review!==undefined||reviewerKey!==undefined)fail('SANDBOX_LEGACY_REVIEW_REJECTED');
+ validateSeed(seed);const a=owner.approval(decode(envelope,publicKey));
  const canonical=digest(JSON.stringify(seed));
- for(const p of [a,r])if(p.kind!=='sandbox-bootstrap-v1'||p.database!==DATABASE||p.seedDigest!==canonical||p.schemaDigest!==schemaDigest()||p.source!==source||p.host!==pool.config.host||!Number.isSafeInteger(p.issuedAt)||!Number.isSafeInteger(p.expiresAt)||p.issuedAt>now()||p.expiresAt<=now()||p.expiresAt-p.issuedAt>300000)fail('SANDBOX_BOOTSTRAP_APPROVAL_REQUIRED');
- const keyDigest=k=>digest((k?.type==='public'?k:require('node:crypto').createPublicKey(k)).export({type:'spki',format:'der'}));
- if(keyDigest(publicKey)===keyDigest(reviewerKey))fail('INDEPENDENT_REVIEWER_REQUIRED');
+ if(a.kind!=='sandbox-owner-bootstrap-v1'||a.database!==DATABASE||a.seedDigest!==canonical||a.schemaDigest!==schemaDigest()||a.source!==source||a.host!==pool.config.host||!Number.isSafeInteger(a.issuedAt)||!Number.isSafeInteger(a.expiresAt)||a.issuedAt>now()||a.expiresAt<=now()||a.expiresAt-a.issuedAt>300000)fail('SANDBOX_BOOTSTRAP_APPROVAL_REQUIRED');
  const c=await pool.getConnection();let begun=false;
  try{
   const [[db]]=await c.query('SELECT DATABASE() AS db');if(db.db!==DATABASE)fail('SANDBOX_DATABASE_IDENTITY_MISMATCH');

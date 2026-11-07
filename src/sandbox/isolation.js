@@ -5,6 +5,7 @@ const path = require('node:path');
 const fail = code => { throw Object.assign(new Error('Sandbox prerequisite unavailable'), {code, status:503}); };
 const DATABASE = 'uniclipspsngsandbox';
 function settings(env) {
+  if(env.SANDBOX_APPROVAL_MODE!=='single-owner-v1'||env.SANDBOX_REVIEWER_PUBLIC_KEY)fail('SANDBOX_OWNER_MODE_REQUIRED');
   if (env.UNICLIPS_SANDBOX !== 'paystack-test-v1' || env.NODE_ENV !== 'test' ||
       env.DB_NAME !== DATABASE || !['psngsandboxapp','psngsandboxmigrator'].includes(env.DB_USER) ||
       !env.DB_HOST || !env.DB_PASS || env.DB_SSL !== 'true' || !env.DB_SSL_CA ||

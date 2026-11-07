@@ -16,16 +16,17 @@ function createSandboxApp({pool,receiver,publicKey,origin}={}){
  app.post('/sandbox/zero-history',express.json({limit:'96kb'}),wrap(async(q,r)=>{
   if(importing)fail('SANDBOX_REVIEW_BUSY');importing=true;
   try{
-   const review=receiver.zeroReview(q.body.review),audit=receiver.decodeAudit(q.body.audit);
+   if(Object.keys(q.body||{}).join(',')!=='authorization')fail('SANDBOX_SINGLE_OWNER_ENVELOPE_REQUIRED');
+   const audit=receiver.zeroAuthorization(q.body.authorization);
    const [[manifest]]=await pool.query('SELECT * FROM sandbox_manifest WHERE singleton=1');
-   if(!manifest||review.seedDigest!==manifest.seed_digest||review.auditDigest!==digest(JSON.stringify(q.body.audit))||
+   if(!manifest||audit.seedDigest!==manifest.seed_digest||manifest.kind!=='synthetic-paystack-test'||
       audit.subjectId!==manifest.subject_id||audit.scholarId!==manifest.scholar_id||audit.sourceRevision!==manifest.seed_digest||
       !Array.isArray(audit.facts)||audit.facts.length||audit.reviewVersion!==1)fail('SANDBOX_ZERO_REVIEW_REQUIRED');
-   // The unchanged importer locks the subject, verifies an empty purchase
-   // census and writes the signed audit in one transaction. Nonzero import is
+   // The existing importer locks the subject; its additional sandbox validator
+   // checks empty financial state before writing the audit in one transaction. Nonzero import is
    // never accepted by this sandbox operator surface.
-   const result=await require('../services/coursePayments/historicalResolver').createAuditImporter({pool,publicKey,verifyProvenance:async()=>false})(q.body.audit);
-   r.json(result);
+   const result=await require('../services/coursePayments/historicalResolver').createAuditImporter({pool,publicKey,verifyProvenance:async()=>false,validateScope:require('./ownerPolicy').requireEmptyFinancialState})(q.body.authorization);
+   r.json({...result,approvalMode:audit.approvalMode,evidenceDigest:audit.evidenceDigest,approvalDigest:digest(JSON.stringify(q.body.authorization))});
   }finally{importing=false;}
  }));
  app.post('/api/paystack/webhook',express.raw({type:'application/json',limit:'256kb'}),require('../controller/paystackWebhookController').paystackWebhook);
