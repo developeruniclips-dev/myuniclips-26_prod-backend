@@ -29,6 +29,9 @@ test.before(async()=>{
  ])await actual.query(sql);
  await actual.query("INSERT INTO roles VALUES(1,'Learner'),(2,'Admin'),(3,'SuperAdmin'),(4,'Scholar')");for(const id of [1,3,4,7,8]){await actual.query("INSERT INTO users VALUES(?, 'SYNTHETIC_HASH',?,DATE_ADD(NOW(),INTERVAL 1 DAY),NOW(),NULL,0,NULL,'Synthetic','User')",[id,'sha256:'+'1'.repeat(64)]);await actual.query('INSERT INTO user_roles VALUES(?,?)',[id,id===3?2:id===4?3:id>=7?4:1]);}
  await actual.query("INSERT INTO subjects VALUES(10,'Synthetic course',6),(20,'Other course',6)");await actual.query('INSERT INTO scholar_profile VALUES(7,1),(8,1)');await actual.query('INSERT INTO scholar_subjects VALUES(1,10,7,1),(2,20,8,1)');
+ await actual.query('CREATE TABLE countries(id INT PRIMARY KEY,code CHAR(2))');await actual.query("INSERT INTO countries VALUES(1,'FI')");
+ await actual.query('CREATE TABLE universities(id INT PRIMARY KEY,name VARCHAR(100),short_name VARCHAR(20),country_id INT)');await actual.query("INSERT INTO universities VALUES(1,'Synthetic FI university','SYN',1)");
+ await actual.query('ALTER TABLE subjects ADD university_id INT DEFAULT 1,ADD degree_programmes VARCHAR(100) DEFAULT NULL');
  for(const sql of require('./fixtures/courseWorkflowSchema.cjs').split(';').map(x=>x.replace(/--[^\n]*/g,'').trim()).filter(Boolean))await actual.query(sql);
  pool=instrument(actual);inject('../src/config/db',{pool});providerAdapter=require('./fixtures/vimeoPolicy').syntheticVimeo({beforeRequest(){assert.equal(connections,0);},state:()=>providerMode});inject('../src/config/vimeo',{...providerAdapter,upload(file,opts,done){assert.equal(connections,0);assert.deepEqual(opts.privacy,{view:'nobody',embed:'private',download:false});providerAdapter.uploaded('/videos/900999',opts);done('/videos/900999');}});
  service=require('../src/services/courseWorkflow').createCourseWorkflow(pool,readiness);

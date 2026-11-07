@@ -1,7 +1,7 @@
 // Guarded loopback MySQL, synthetic accounts, forbidden provider doubles. No .env.
 const test=require('node:test'),assert=require('node:assert/strict'),mysql=require('mysql2/promise'),jwt=require('jsonwebtoken'),express=require('express');
 if(process.env.P1D_ISOLATED_TEST!=='1')throw Error('Explicit isolated P1D test flag required');
-process.env.JWT_SECRET='P1D_SYNTHETIC_SIGNING_KEY';
+process.env.JWT_SECRET=require('node:crypto').randomBytes(32).toString('hex');
 const config={host:'127.0.0.1',port:33316,user:'root',password:'',database:'uniclips_content_p1d_test'};
 let actual,pool,service,server,base,queries=[],failEntitlement=false,failRoles=false;
 const inject=(file,exports)=>{const f=require.resolve(file);require.cache[f]={id:f,filename:f,loaded:true,exports};};
@@ -13,11 +13,12 @@ const deny=async(promise,status)=>assert.rejects(promise,e=>e.status===status);
 async function entitlement(buyer=1,changes=''){await actual.query(`INSERT INTO subject_purchases(buyer_user_id,subject_id,scholar_id,created_at,access_expires_at,is_access_active) VALUES (?,10,7,DATE_SUB(NOW(),INTERVAL 1 MONTH),DATE_ADD(DATE_SUB(NOW(),INTERVAL 1 MONTH),INTERVAL 5 MONTH),1)`,[buyer]);if(changes)await actual.query('UPDATE subject_purchases SET '+changes);}
 test.before(async()=>{
  const admin=await mysql.createConnection({...config,database:undefined});await admin.query('CREATE DATABASE IF NOT EXISTS uniclips_content_p1d_test');await admin.end();actual=mysql.createPool({...config,connectionLimit:6});assert.equal((await actual.query('SELECT DATABASE() AS name'))[0][0].name,config.database);
- for(const name of ['course_workflow_uploads','course_workflows','user_library','video_progress','purchases','subject_purchases','videos','scholar_subjects','scholar_profile','subjects','universities','user_roles','roles','users'])await actual.query('DROP TABLE IF EXISTS '+name);
+ for(const name of ['course_workflow_uploads','course_workflows','user_library','video_progress','purchases','subject_purchases','videos','scholar_subjects','scholar_profile','subjects','universities','countries','user_roles','roles','users'])await actual.query('DROP TABLE IF EXISTS '+name);
  for(const sql of [
  'CREATE TABLE users(id INT PRIMARY KEY,fname VARCHAR(100),lname VARCHAR(100),email VARCHAR(100),password VARCHAR(255),refresh_token VARCHAR(500),refresh_token_expires DATETIME,last_activity DATETIME,locked_until DATETIME,two_factor_enabled TINYINT,two_factor_secret VARCHAR(255))',
  'CREATE TABLE roles(id INT PRIMARY KEY,name VARCHAR(30))','CREATE TABLE user_roles(user_id INT,role_id INT)',
- 'CREATE TABLE universities(id INT PRIMARY KEY,name VARCHAR(100),short_name VARCHAR(20))',
+ 'CREATE TABLE countries(id INT PRIMARY KEY,code VARCHAR(3))',
+ 'CREATE TABLE universities(id INT PRIMARY KEY,name VARCHAR(100),short_name VARCHAR(20),country_id INT NOT NULL)',
  'CREATE TABLE subjects(id INT PRIMARY KEY,name VARCHAR(100),bundle_price DECIMAL(10,2),degree_programmes VARCHAR(100),university_id INT)',
  'CREATE TABLE scholar_profile(user_id INT PRIMARY KEY,approved TINYINT,university VARCHAR(100),degree VARCHAR(100))',
  'CREATE TABLE scholar_subjects(id INT PRIMARY KEY,subject_id INT,scholar_user_id INT,approved TINYINT,expertise TEXT)',
@@ -29,7 +30,7 @@ test.before(async()=>{
  ])await actual.query(sql);
  await actual.query("INSERT INTO roles VALUES(1,'Learner'),(2,'Admin'),(3,'SuperAdmin'),(4,'Scholar')");
  for(const id of [1,2,3,4,7,8]){await actual.query('INSERT INTO users VALUES(?,?,?, ?,?,?,DATE_ADD(NOW(),INTERVAL 1 DAY),NOW(),NULL,0,NULL)',[id,'Synthetic','User',`content${id}@example.invalid`,'SYNTHETIC_HASH','sha256:'+'1'.repeat(64)]);await actual.query('INSERT INTO user_roles VALUES(?,?)',[id,id===3?2:id===4?3:id>=7?4:1]);}
- await actual.query("INSERT INTO universities VALUES(1,'Synthetic University','SYN')");await actual.query("INSERT INTO subjects VALUES(10,'Course One',6,'Synthetic programme',1),(20,'Course Two',6,'Synthetic programme',1)");await actual.query('INSERT INTO scholar_profile(user_id,approved) VALUES(7,1),(8,1)');await actual.query('INSERT INTO scholar_subjects VALUES(1,10,7,1,NULL),(2,20,8,0,NULL)');
+ await actual.query("INSERT INTO countries VALUES(1,'FI')");await actual.query("INSERT INTO universities VALUES(1,'Synthetic University','SYN',1)");await actual.query("INSERT INTO subjects VALUES(10,'Course One',6,'Synthetic programme',1),(20,'Course Two',6,'Synthetic programme',1)");await actual.query('INSERT INTO scholar_profile(user_id,approved) VALUES(7,1),(8,1)');await actual.query('INSERT INTO scholar_subjects VALUES(1,10,7,1,NULL),(2,20,8,0,NULL)');
  for(const [id,subject,scholar,sequence,approved]of [[101,10,7,2,1],[102,10,7,7,1],[103,10,7,9,0],[201,20,8,1,1],[202,20,8,2,1]])await actual.query('INSERT INTO videos(id,subject_id,scholar_user_id,sequence_index,approved,is_free,title,video_url) VALUES(?,?,?,?,?,1,?,?)',[id,subject,scholar,sequence,approved,'Synthetic lesson','https://vimeo.com/'+(900000+id)]);
  for(const sql of require('./fixtures/courseWorkflowSchema.cjs').split(';').map(x=>x.replace(/--[^\n]*/g,'').trim()).filter(Boolean))await actual.query(sql);
  pool=instrument(actual);inject('../src/config/db',{pool});inject('../src/config/stripe',new Proxy({},{get(){throw Error('Provider operations forbidden');}}));inject('../src/config/vimeo',require('./fixtures/vimeoPolicy').syntheticVimeo({beforeRequest(o){assert.equal(o.method,'GET','P1-D playback never changes provider policy');}}));

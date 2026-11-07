@@ -73,6 +73,8 @@ app.post(
 );
 
 // Normal middleware (after webhook)
+// Separate raw-body endpoint; Stripe aliases and their parser are unchanged.
+app.post('/api/paystack/webhook',express.raw({type:'application/json',limit:'256kb'}),require('./controller/paystackWebhookController').paystackWebhook);
 // Escaped Unicode metadata can exceed the default JSON limit without exceeding
 // the character limits. Increase capacity only for lesson metadata editing.
 app.use('/api/videos/my/:id', express.json({ limit: '256kb' }));

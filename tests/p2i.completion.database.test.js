@@ -38,15 +38,23 @@ test('actual buyer/bundle/expired/sales queries retain authorization, fields and
 });
 test('Scholar aggregate filter is SQL-equivalent and does not mix another Scholar',async()=>{
  await pool.query("INSERT INTO scholar_subjects VALUES(1,7,1,'fixture','degree','fixture',1,'2026-01-01'),(2,8,1,'other','degree','fixture',1,'2026-01-01')");
- const {ScholarSubjectModel:M}=require('../src/models/scholarSubjects');const [rows]=await M.getScholarSubjectsStatus(7);assert.equal(rows.length,1);assert.equal(Number(rows[0].total_revenue),13);assert.equal(Number(rows[0].sales_count),2);
- const [original]=await pool.query(`SELECT ss.id,COALESCE(p.sales_count,0) AS sales_count,COALESCE(p.total_revenue,0) AS total_revenue FROM scholar_subjects ss LEFT JOIN (SELECT subject_id,scholar_id,COUNT(*) AS sales_count,SUM(amount) AS total_revenue FROM subject_purchases GROUP BY subject_id,scholar_id) p ON p.subject_id=ss.subject_id AND p.scholar_id=ss.scholar_user_id WHERE ss.scholar_user_id=?`,[7]);assert.equal(rows[0].sales_count,original[0].sales_count);assert.equal(rows[0].total_revenue,original[0].total_revenue);
+ const {ScholarSubjectModel:M}=require('../src/models/scholarSubjects');const [rows]=await M.getScholarSubjectsStatus(7);assert.equal(rows.length,1);assert.equal(Number(rows[0].total_revenue),6);assert.equal(rows[0].total_revenue_currency,'EUR');assert.equal(Number(rows[0].sales_count),2);
+ const [original]=await pool.query('SELECT currency,SUM(amount) AS revenue,COUNT(*) AS sales FROM subject_purchases WHERE subject_id=1 AND scholar_id=7 GROUP BY currency');
+ const buckets=typeof rows[0].revenue_by_currency==='string'?JSON.parse(rows[0].revenue_by_currency):rows[0].revenue_by_currency;
+ for(const r of original)assert.equal(Number(buckets[r.currency]),Number(r.revenue));
+ assert.equal(Number(rows[0].sales_count),original.reduce((n,r)=>n+Number(r.sales),0));assert.equal(Number(rows[0].ngn_revenue),0);
 });
 test('real earnings remains exactly equal to accepted financial oracle',async()=>{
  await pool.query('DELETE FROM subject_purchases');for(let start=1;start<=105;start++){await pool.query("INSERT INTO subject_purchases(id,buyer_user_id,subject_id,scholar_id,amount,currency,transaction_id,created_at,access_expires_at,is_access_active) VALUES(?,1,1,7,6.01,'EUR',?,IF(?<100,'2020-01-01',CURRENT_TIMESTAMP),'2030-01-01',1)",[start,'fixture-'+start,start]);}
  await pool.query("INSERT INTO subject_purchases(id,buyer_user_id,subject_id,scholar_id,amount,currency,transaction_id,created_at,access_expires_at,is_access_active) VALUES(200,1,1,7,7.01,'USD','fixture-usd',CURRENT_TIMESTAMP,'2030-01-01',1)");
  for(const [id,state,refund,dispute]of [[101,'completed','none','none'],[102,'pending','none','none'],[103,'uncertain','none','none'],[104,'pending','full','open']]){await pool.query('INSERT INTO payment_orders VALUES(?,?,?,?)',['order-'+id,id,refund,dispute]);await pool.query("INSERT INTO payment_allocations VALUES(?,7,'EUR',301)",['order-'+id]);await pool.query('INSERT INTO payment_transfers VALUES(?,?,?,CURRENT_TIMESTAMP)',['order-'+id,state,'tr_fixture_'+id]);}
  const desc=JSON.stringify({kind:'uniclips_legacy_verified_v1',purchaseId:1,paymentId:'fixture-1',grossMinor:601,amountMinor:421,rate:70,ordinal:1});await pool.query("INSERT INTO scholar_payouts VALUES(1,7,'EUR',4.21,'completed',?,'tr_fixture',CURRENT_TIMESTAMP),(2,7,'USD',1,'uncertain','malformed',NULL,CURRENT_TIMESTAMP)",[desc]);
- const candidate=require('../src/services/payments/earningsService'),baseline=require('./fixtures/p2iEarningsBaseline.cjs');assert.deepEqual(await candidate.scholarEarnings(pool,7),await baseline.scholarEarnings(pool,7));
+ const candidate=require('../src/services/payments/earningsService'),baseline=require('./fixtures/p2iEarningsBaseline.cjs');
+ const mixed=await candidate.scholarEarnings(pool,7),old=await baseline.scholarEarnings(pool,7);
+ assert.equal(mixed.summary.scholarEarnings,null);assert.equal(mixed.summary.legacyReconciliationRequired,true);
+ for(const key of ['totalRevenue','totalPaid','pendingBalance','authoritativeEarned','verifiedReleaseEarned','uncertainTransferAmount'])assert.equal(mixed.summary[key],old.summary[key],key);
+ await pool.query('DELETE FROM subject_purchases WHERE id=200');
+ assert.deepEqual(await candidate.scholarEarnings(pool,7),await baseline.scholarEarnings(pool,7));
 });
 test('real Operations offset boundary, queue overflow and late read recovery',async()=>{
  const {paginate}=require('../src/services/operations/data');const p=await paginate(pool,'id','FROM items',[],{page:'201',limit:'50'});assert.equal(p.rows.length,1);assert.equal(p.total,10001);await assert.rejects(paginate(pool,'id','FROM items',[],{page:'202',limit:'50'}),e=>e.status===400);
