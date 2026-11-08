@@ -18,7 +18,7 @@ function createSandboxPool({env,createPool,readCA,requireMarker=true}={}) {
       // MySQL remains possible; production application data must be inaccessible.
       for(const row of grants){const g=String(Object.values(row)[0]);
         if(!/^GRANT USAGE ON \*\.\* TO /i.test(g)&&
-           !new RegExp('^GRANT [A-Z_, ]+ ON `?'+DATABASE+'`?\\.\\* TO ','i').test(g))fail('SANDBOX_DATABASE_GRANTS_UNSAFE');
+           !new RegExp('^GRANT [A-Z_, ]+ ON (?:'+DATABASE+'|`'+DATABASE+'`|"'+DATABASE+'")\\.\\* TO ','i').test(g))fail('SANDBOX_DATABASE_GRANTS_UNSAFE');
         if(/WITH GRANT OPTION/i.test(g))fail('SANDBOX_DATABASE_GRANTS_UNSAFE');
         if(env.DB_USER==='psngsandboxapp'&&!/^GRANT (?:USAGE|SELECT|INSERT|UPDATE|DELETE|,| )+ ON /i.test(g))fail('SANDBOX_DATABASE_GRANTS_UNSAFE');
       }

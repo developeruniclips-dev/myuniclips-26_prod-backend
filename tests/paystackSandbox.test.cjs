@@ -63,6 +63,56 @@ test('bootstrap is preview-only by default and contains synthetic core plus all 
  const B=require('../src/sandbox/bootstrap');assert.equal(B.statements.filter(s=>s.startsWith('CREATE TABLE paystack_ng_')).length,9);assert(B.statements.some(s=>s.includes('CREATE TABLE users')));assert(B.statements.some(s=>s.includes('CREATE TABLE user_roles')));assert(!B.statements.some(s=>/CREATE DATABASE|DROP|GLOBAL|INSERT.*SELECT/.test(s)));
  const cp=require('node:child_process');const r=cp.spawnSync(process.execPath,['scripts/paystackSandboxBootstrap.cjs'],{encoding:'utf8',env:{PATH:process.env.PATH,SystemRoot:process.env.SystemRoot},windowsHide:true});assert.equal(r.status,0);assert.match(r.stdout,/Preview only/);
 });
+
+test('grant formatting accepts only paired quotes around the exact sandbox schema and rejects unsafe grants',async t=>{
+ const tls=require('node:tls');
+ const ca=Buffer.from(tls.rootCertificates.find(pem=>{const c=new crypto.X509Certificate(pem);return c.ca&&Date.parse(c.validFrom)<=Date.now()&&Date.parse(c.validTo)>Date.now();}));
+ const privileges={psngsandboxapp:'SELECT, INSERT, UPDATE, DELETE',psngsandboxmigrator:'SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, REFERENCES, INDEX, ALTER'};
+ async function check(user,grants,accepted){
+  let destroyed=0,manifestReads=0,returned=false;
+  const c={async query(sql){const s=typeof sql==='string'?sql:sql.sql;
+   if(s.startsWith('SET SESSION'))return[[]];
+   if(s.startsWith('SELECT DATABASE'))return[[{db:DATABASE,account:user+'@%',zone:'+00:00'}]];
+   if(s==='SHOW GRANTS')return[grants.map(g=>({Grants:g}))];
+   if(s.includes('sandbox_manifest')){manifestReads++;return[[{version:1}]];}
+   throw Error('Unexpected fixture query');
+  },destroy(){destroyed++;},release(){}};
+  const pool=createSandboxPool({env:{...env(),DB_USER:user},readCA:()=>ca,createPool:()=>({getConnection:async()=>c,end:async()=>{}})});
+  if(accepted){assert.equal(await pool.getConnection(),c);returned=true;}
+  else await assert.rejects(pool.getConnection(),{code:'SANDBOX_DATABASE_GRANTS_UNSAFE'});
+  assert.equal(returned,accepted);assert.equal(destroyed,accepted?0:1);assert.equal(manifestReads,accepted?1:0);
+ }
+ for(const user of Object.keys(privileges))for(const quote of ['', '`', '"'])await t.test(user+' accepts '+(quote||'unquoted'),()=>check(user,[
+  'GRANT USAGE ON *.* TO "'+user+'"@"%"',
+  'GRANT '+privileges[user]+' ON '+quote+DATABASE+quote+'.* TO "'+user+'"@"%"'
+ ],true));
+ const unsafe=[
+  ['global SELECT','GRANT SELECT ON *.* TO "USER"@"%"'],
+  ['global ALL','GRANT ALL PRIVILEGES ON *.* TO "USER"@"%"'],
+  ['other schema unquoted','GRANT SELECT ON other_schema.* TO "USER"@"%"'],
+  ['other schema backticks','GRANT SELECT ON `other_schema`.* TO "USER"@"%"'],
+  ['other schema double quotes','GRANT SELECT ON "other_schema".* TO "USER"@"%"'],
+  ['schema prefix','GRANT SELECT ON "uniclipspsngsandbox_extra".* TO "USER"@"%"'],
+  ['schema wildcard','GRANT SELECT ON "uniclipspsngsandbox%".* TO "USER"@"%"'],
+  ['quoted composite identifier','GRANT SELECT ON "uniclipspsngsandbox.other_schema".* TO "USER"@"%"'],
+  ['table-level grant','GRANT SELECT ON "uniclipspsngsandbox"."private_table" TO "USER"@"%"'],
+  ['role grant','GRANT "sandbox_role"@"%" TO "USER"@"%"'],
+  ['grant option','GRANT SELECT ON "uniclipspsngsandbox".* TO "USER"@"%" WITH GRANT OPTION'],
+  ['USAGE grant option','GRANT USAGE ON *.* TO "USER"@"%" WITH GRANT OPTION'],
+  ['mismatched double/backtick','GRANT SELECT ON "uniclipspsngsandbox`.* TO "USER"@"%"'],
+  ['mismatched backtick/double','GRANT SELECT ON `uniclipspsngsandbox".* TO "USER"@"%"'],
+  ['missing closing double quote','GRANT SELECT ON "uniclipspsngsandbox.* TO "USER"@"%"'],
+  ['missing opening backtick','GRANT SELECT ON uniclipspsngsandbox`.* TO "USER"@"%"']
+ ];
+ for(const user of Object.keys(privileges))for(const [label,g]of unsafe)await t.test(user+' rejects '+label,()=>check(user,[
+  'GRANT USAGE ON *.* TO "'+user+'"@"%"',
+  'GRANT '+privileges[user]+' ON "'+DATABASE+'".* TO "'+user+'"@"%"',
+  g.replaceAll('USER',user)
+ ],false));
+ for(const privilege of ['CREATE','DROP','ALTER','INDEX','REFERENCES','EXECUTE','ALL PRIVILEGES'])await t.test('app rejects '+privilege,()=>check('psngsandboxapp',[
+  'GRANT SELECT, '+privilege+' ON "'+DATABASE+'".* TO "psngsandboxapp"@"%"'
+ ],false));
+});
 test('issuer drafts require fresh complete roster evidence and retain exact existing TTLs',()=>{
  const {draft,signReviewed}=require('../scripts/paystackSandboxApproval.cjs'),now=Date.now();
  const challenge={approvalMode:owner.approvalMode,identity:{service:'srv-fixture',generation:'boot',source:'offline',instance:'fixture'},challenge:'synthetic',sequence:0,syntheticScope:{subjectId:401,scholarId:301,seedDigest:'a'.repeat(64)}};
