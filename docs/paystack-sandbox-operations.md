@@ -86,6 +86,19 @@ PAYSTACK_NG_WEBHOOK_SECRET=<private active Test signing secret>
 PAYSTACK_NG_LIVE_CHECKOUT=disabled
 ```
 
+Render public-key delivery: keep the configured mount path above. Only in the
+Render/Linux sandbox, startup resolves this exact managed filename within
+`/etc/secrets`, checks trusted directory ownership and permissions, and opens a
+bounded regular target with `O_NOFOLLOW`. It accepts only an Ed25519 public SPKI
+PEM, then creates an exclusive `0600` regular copy in a private `0700` directory
+under `/tmp`. Source identity changes, escaped targets, writable source paths,
+hardlinks, private-key envelopes and destination substitution are refused.
+The original startup no-symlink check consumes the copy. Only this process's
+authority path is updated so later runtime reads use the same regular file;
+hosted environment settings stay unchanged. Shutdown/startup failure removes
+the owned copy. Do not upload a private key, precreate the destination, change
+this into a general symlink reader, or reuse a copy across restarts.
+
 Initially leave `PAYSTACK_NG_TEST_CHECKOUT`, `PAYSTACK_NG_VERIFICATION` and
 `PAYSTACK_NG_WEBHOOKS` disabled. At the separately authorized Test window, set the
 specific approved controls to `enabled`. This can redeploy: obtain the challenge
