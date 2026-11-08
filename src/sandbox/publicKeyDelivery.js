@@ -9,8 +9,9 @@ function same(a,b){return ['dev','ino','mode','uid','gid','size','mtimeNs','ctim
 function stat(file){return fs.lstatSync(file,{bigint:true});}
 function directory(file,uid,temporary=false){
  const s=stat(file),mode=Number(s.mode),owner=Number(s.uid);
- if(!s.isDirectory()||s.isSymbolicLink()||![0,uid].includes(owner)||
-    ((mode&0o022)!==0&&!(temporary&&owner===0&&(mode&0o1000)!==0)))stop('SANDBOX_KEY_DIRECTORY_UNSAFE');
+ if(!s.isDirectory()||s.isSymbolicLink())stop('SANDBOX_KEY_DIRECTORY_TYPE');
+ if(![0,uid].includes(owner))stop('SANDBOX_KEY_DIRECTORY_OWNER');
+ if((mode&0o022)!==0&&!(temporary&&owner===0&&(mode&0o1000)!==0))stop('SANDBOX_KEY_DIRECTORY_WRITABLE');
  return s;
 }
 function publicFile(s,uid){
@@ -30,15 +31,22 @@ function deliverRenderPublicKey(env){
  if(process.platform!=='linux'||env.RENDER!=='true'||env.DB_USER!=='psngsandboxapp'||env.PAYSTACK_NG_AUTHORITY_PUBLIC_KEY!==SOURCE||
     !/^srv-[a-z0-9]+$/.test(env.RENDER_SERVICE_ID||''))stop('SANDBOX_KEY_DELIVERY_SCOPE_REQUIRED');
  const uid=process.geteuid(),parents=new Map();
- for(const p of ['/','/etc',ROOT])parents.set(p,directory(p,uid));
- if(fs.realpathSync(ROOT)!==ROOT)stop('SANDBOX_KEY_SOURCE_ESCAPE');
+ for(const p of ['/','/etc'])parents.set(p,directory(p,uid));
+ // /etc is a checked non-writable anchor. Render may alias the mount itself;
+ // capture that entry and verify every actual parent of its canonical target.
+ const anchor=stat(ROOT);
+ if((!anchor.isDirectory()&&!anchor.isSymbolicLink())||![0,uid].includes(Number(anchor.uid)))stop('SANDBOX_KEY_SOURCE_ANCHOR_UNSAFE');
+ const canonicalRoot=fs.realpathSync(ROOT);
+ if(['/','/etc','/tmp','/proc','/dev'].includes(canonicalRoot))stop('SANDBOX_KEY_SOURCE_ESCAPE');
+ let checked=canonicalRoot;
+ while(checked!=='/'){parents.set(checked,directory(checked,uid));checked=path.dirname(checked);}
  const entry=stat(SOURCE);
  if(!entry.isFile()&&!entry.isSymbolicLink())stop('SANDBOX_KEY_SOURCE_UNSAFE');
  if(![0,uid].includes(Number(entry.uid)))stop('SANDBOX_KEY_SOURCE_UNSAFE');
- const resolved=fs.realpathSync(SOURCE),relative=path.relative(ROOT,resolved);
+ const resolved=fs.realpathSync(SOURCE),relative=path.relative(canonicalRoot,resolved);
  if(!relative||relative==='..'||relative.startsWith('../')||path.isAbsolute(relative)||path.basename(resolved)!==path.basename(SOURCE))stop('SANDBOX_KEY_SOURCE_ESCAPE');
  let parent=path.dirname(resolved);
- while(parent!==ROOT){parents.set(parent,directory(parent,uid));parent=path.dirname(parent);}
+ while(parent!==canonicalRoot){parents.set(parent,directory(parent,uid));parent=path.dirname(parent);}
  const sourceStat=stat(resolved);publicFile(sourceStat,uid);
  const nofollow=fs.constants.O_NOFOLLOW,nonblock=fs.constants.O_NONBLOCK;
  if(!nofollow||!nonblock)stop('SANDBOX_KEY_NOFOLLOW_REQUIRED');
@@ -59,7 +67,7 @@ function deliverRenderPublicKey(env){
   const bytes=Buffer.alloc(Number(opened.size));let offset=0;
   while(offset<bytes.length){const n=fs.readSync(fd,bytes,offset,bytes.length-offset,offset);if(!n)stop('SANDBOX_KEY_SOURCE_CHANGED');offset+=n;}
   publicPem(bytes);
-  if(!same(opened,fs.fstatSync(fd,{bigint:true}))||!same(sourceStat,stat(resolved))||!same(entry,stat(SOURCE))||fs.realpathSync(SOURCE)!==resolved)stop('SANDBOX_KEY_SOURCE_CHANGED');
+  if(!same(opened,fs.fstatSync(fd,{bigint:true}))||!same(sourceStat,stat(resolved))||!same(entry,stat(SOURCE))||!same(anchor,stat(ROOT))||fs.realpathSync(ROOT)!==canonicalRoot||fs.realpathSync(SOURCE)!==resolved)stop('SANDBOX_KEY_SOURCE_CHANGED');
   for(const [p,s]of parents)if(!same(s,directory(p,uid)))stop('SANDBOX_KEY_SOURCE_CHANGED');
   fs.closeSync(fd);fd=undefined;
   directory('/tmp',uid,true);

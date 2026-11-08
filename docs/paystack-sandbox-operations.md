@@ -87,12 +87,16 @@ PAYSTACK_NG_LIVE_CHECKOUT=disabled
 ```
 
 Render public-key delivery: keep the configured mount path above. Only in the
-Render/Linux sandbox, startup resolves this exact managed filename within
-`/etc/secrets`, checks trusted directory ownership and permissions, and opens a
+Render/Linux sandbox, startup resolves this exact managed filename within the
+canonical mount anchored at `/etc/secrets`, checks trusted directory ownership
+and permissions along the entire actual path, and opens a
 bounded regular target with `O_NOFOLLOW`. It accepts only an Ed25519 public SPKI
 PEM, then creates an exclusive `0600` regular copy in a private `0700` directory
 under `/tmp`. Source identity changes, escaped targets, writable source paths,
 hardlinks, private-key envelopes and destination substitution are refused.
+The mount anchor may itself be a Render-managed alias only under the checked,
+non-writable `/etc` parent. Its ownership, identity and canonical target must
+remain stable; broad roots and writable resolved directories are refused.
 The original startup no-symlink check consumes the copy. Only this process's
 authority path is updated so later runtime reads use the same regular file;
 hosted environment settings stay unchanged. Shutdown/startup failure removes

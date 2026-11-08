@@ -29,8 +29,8 @@ if(process.platform!=='linux'||process.env.UNICLIPS_KEY_DELIVERY_FIXTURE!=='isol
  for(const [name,change,code]of [
   ['outside target',()=>{fs.unlinkSync(source);fs.symlinkSync('/tmp/unexpected-public-key',source);fs.writeFileSync('/tmp/unexpected-public-key',publicKey());},'SANDBOX_KEY_SOURCE_ESCAPE'],
   ['wrong basename',()=>{fs.renameSync(target,'/etc/secrets/version-1/another.pem');fs.unlinkSync(source);fs.symlinkSync('version-1/another.pem',source);},'SANDBOX_KEY_SOURCE_ESCAPE'],
-  ['writable mount directory',()=>fs.chmodSync('/etc/secrets',0o777),'SANDBOX_KEY_DIRECTORY_UNSAFE'],
-  ['writable target directory',()=>fs.chmodSync('/etc/secrets/version-1',0o775),'SANDBOX_KEY_DIRECTORY_UNSAFE'],
+  ['writable mount directory',()=>fs.chmodSync('/etc/secrets',0o777),'SANDBOX_KEY_DIRECTORY_WRITABLE'],
+  ['writable target directory',()=>fs.chmodSync('/etc/secrets/version-1',0o775),'SANDBOX_KEY_DIRECTORY_WRITABLE'],
   ['writable key',()=>fs.chmodSync(target,0o666),'SANDBOX_KEY_SOURCE_UNSAFE'],
   ['executable key',()=>fs.chmodSync(target,0o755),'SANDBOX_KEY_SOURCE_UNSAFE'],
   ['wrong owner',()=>fs.chownSync(target,1001,1001),'SANDBOX_KEY_SOURCE_UNSAFE'],
@@ -68,4 +68,12 @@ if(process.platform!=='linux'||process.env.UNICLIPS_KEY_DELIVERY_FIXTURE!=='isol
   }
  });
  for(const patch of [{RENDER:'false'},{PAYSTACK_NG_AUTHORITY_PUBLIC_KEY:'/tmp/arbitrary.pem'},{DB_USER:'psngsandboxmigrator'},{RENDER_SERVICE_ID:''},{NODE_ENV:'production'},{DB_NAME:'production'}])test('delivery scope remains constrained: '+Object.keys(patch)[0],()=>assert.throws(()=>deliver({...env(),...patch})));
+ test('a trusted managed mount alias is confined to its checked canonical directory',()=>{
+  const pem=setup();fs.renameSync('/etc/secrets','/etc/render-public-fixture');fs.symlinkSync('render-public-fixture','/etc/secrets');let d;
+  try{d=deliver(env());d.assertUnchanged(pem);assert.equal(fs.readFileSync(d.file,'utf8'),pem);}finally{if(d)d.cleanup();fs.unlinkSync('/etc/secrets');fs.renameSync('/etc/render-public-fixture','/etc/secrets');}
+ });
+ test('managed mount aliases to broad or writable roots are refused',()=>{
+  setup();fs.renameSync('/etc/secrets','/etc/render-public-fixture');
+  try{for(const target of ['/tmp','/etc','/']){fs.symlinkSync(target,'/etc/secrets');try{assert.throws(()=>deliver(env()),{code:'SANDBOX_KEY_SOURCE_ESCAPE'});}finally{fs.unlinkSync('/etc/secrets');}}}finally{fs.renameSync('/etc/render-public-fixture','/etc/secrets');}
+ });
 }
