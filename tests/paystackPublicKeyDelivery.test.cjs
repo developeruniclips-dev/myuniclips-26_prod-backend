@@ -29,8 +29,8 @@ if(process.platform!=='linux'||process.env.UNICLIPS_KEY_DELIVERY_FIXTURE!=='isol
  for(const [name,change,code]of [
   ['outside target',()=>{fs.unlinkSync(source);fs.symlinkSync('/tmp/unexpected-public-key',source);fs.writeFileSync('/tmp/unexpected-public-key',publicKey());},'SANDBOX_KEY_SOURCE_ESCAPE'],
   ['wrong basename',()=>{fs.renameSync(target,'/etc/secrets/version-1/another.pem');fs.unlinkSync(source);fs.symlinkSync('version-1/another.pem',source);},'SANDBOX_KEY_SOURCE_ESCAPE'],
-  ['writable mount directory',()=>fs.chmodSync('/etc/secrets',0o777),'SANDBOX_KEY_DIRECTORY_WRITABLE'],
-  ['writable target directory',()=>fs.chmodSync('/etc/secrets/version-1',0o775),'SANDBOX_KEY_DIRECTORY_WRITABLE'],
+  ['writable mount directory',()=>fs.chmodSync('/etc/secrets',0o777),'SANDBOX_KEY_SOURCE_DIRECTORY_WRITABLE'],
+  ['writable target directory',()=>fs.chmodSync('/etc/secrets/version-1',0o775),'SANDBOX_KEY_SOURCE_DIRECTORY_WRITABLE'],
   ['writable key',()=>fs.chmodSync(target,0o666),'SANDBOX_KEY_SOURCE_UNSAFE'],
   ['executable key',()=>fs.chmodSync(target,0o755),'SANDBOX_KEY_SOURCE_UNSAFE'],
   ['wrong owner',()=>fs.chownSync(target,1001,1001),'SANDBOX_KEY_SOURCE_UNSAFE'],

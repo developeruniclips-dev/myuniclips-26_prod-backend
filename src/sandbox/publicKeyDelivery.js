@@ -11,7 +11,7 @@ function directory(file,uid,temporary=false){
  const s=stat(file),mode=Number(s.mode),owner=Number(s.uid);
  if(!s.isDirectory()||s.isSymbolicLink())stop('SANDBOX_KEY_DIRECTORY_TYPE');
  if(![0,uid].includes(owner))stop('SANDBOX_KEY_DIRECTORY_OWNER');
- if((mode&0o022)!==0&&!(temporary&&owner===0&&(mode&0o1000)!==0))stop('SANDBOX_KEY_DIRECTORY_WRITABLE');
+ if((mode&0o022)!==0&&!(temporary&&owner===0&&(mode&0o1000)!==0))stop(temporary?'SANDBOX_KEY_TEMP_DIRECTORY_WRITABLE':'SANDBOX_KEY_SOURCE_DIRECTORY_WRITABLE');
  return s;
 }
 function publicFile(s,uid){
