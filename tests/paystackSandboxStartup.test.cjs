@@ -17,7 +17,7 @@ async function run({at,code='EACCES',error,patch={},file={},receiverCleanup,pool
   'node:fs':{lstatSync:()=>{trip('public-key-stat');return{isFile:()=>file.regular!==false,isSymbolicLink:()=>file.symlink===true,size:file.size||100};},readFileSync:()=>{trip('public-key-read');return canary;}},
   './isolation':{settings:env=>{trip('settings');return require('../src/sandbox/isolation').settings(env);},identity:()=>{trip('source-identity');return{};},fail:code=>{throw fault(code);}},
   './ownerPolicy':{ownerKey:()=>trip('public-key-validation')},
-  './publicKeyDelivery':{deliverRenderPublicKey:()=>{trip('public-key-delivery');return{file:'inert-private-copy',assertUnchanged:()=>{},cleanup:()=>{calls.push('key-cleanup');}};}},
+  './publicKeyEnvironment':{deliverRenderPublicKeyFromEnvironment:()=>{trip('public-key-delivery');return{file:'inert-private-copy',assertUnchanged:()=>{},cleanup:()=>{calls.push('key-cleanup');}};}},
   './database':{createSandboxPool:()=>{trip('pool-configuration');return pool;}},
   'mysql2/promise':{createPool:()=>{throw Error('REAL_DRIVER_FORBIDDEN');}},
   './bootstrap':{metadata:async()=>{trip('metadata');return{};}},
@@ -34,7 +34,7 @@ async function run({at,code='EACCES',error,patch={},file={},receiverCleanup,pool
  const output=errors.join('\n');assert(!output.includes(canary),'Sensitive exception or environment leaked');
  const diagnostics=errors.map(JSON.parse);
  for(const d of diagnostics){assert.equal(d.event,'SANDBOX_STARTUP_FAILED');assert(Object.keys(d).every(k=>['event','stage','code','receiverCleanupCode','poolCleanupCode','keyCleanupCode'].includes(k)));}
- return{diagnostics,logs,calls,poolClosed,receiverClosed,listened,serverClosed,signals,exitCode:proc.exitCode,result,rejected,receiver};
+ return{diagnostics,logs,calls,poolClosed,receiverClosed,listened,serverClosed,signals,exitCode:proc.exitCode,result,rejected,receiver,environment};
 }
 for(const [stage,code]of [
  ['settings','SANDBOX_ISOLATION_REQUIRED'],['public-key-stat','ENOENT'],['public-key-read','EACCES'],
@@ -86,12 +86,15 @@ test('exported start retains success/close interface and synthetic scope',async(
 test('exported start rejection is also sanitized and contains no raw cause',async()=>{
  const r=await run({asModule:true,at:'metadata',code:'ER_ACCESS_DENIED_ERROR'});assert.equal(r.rejected.code,'ER_ACCESS_DENIED_ERROR');assert.equal(r.rejected.stage,'metadata');assert.equal(r.rejected.message,'Sandbox startup refused');assert.equal(r.rejected.cause,undefined);assert(!JSON.stringify(r.rejected).includes(canary));
 });
-test('Render mount uses a regular copy for startup and later runtime reads, then cleans it on shutdown',async()=>{
- const r=await run({asModule:true,delivery:true});assert.equal(r.rejected,undefined);await r.result.close();assert(r.calls.includes('public-key-delivery'));assert(r.calls.includes('public-key-stat'));assert(r.calls.includes('key-cleanup'));
+test('Render uses a regular environment-key file for startup and runtime reads, then cleans it on shutdown',async()=>{
+ const r=await run({asModule:true,delivery:true,patch:{PAYSTACK_NG_AUTHORITY_PUBLIC_KEY_PEM:canary}});assert.equal(r.rejected,undefined);assert.equal(r.environment.PAYSTACK_NG_AUTHORITY_PUBLIC_KEY,'inert-private-copy');assert.equal(r.environment.PAYSTACK_NG_AUTHORITY_PUBLIC_KEY_PEM,undefined);await r.result.close();assert(r.calls.includes('public-key-delivery'));assert(r.calls.includes('public-key-stat'));assert(r.calls.includes('key-cleanup'));
 });
 test('Render delivery refusal is diagnostic and does not reach file reads or database configuration',async()=>{
- const r=await run({delivery:true,at:'public-key-delivery',code:'SANDBOX_KEY_SOURCE_ESCAPE'});assert.equal(r.diagnostics[0].stage,'public-key-delivery');assert.equal(r.diagnostics[0].code,'SANDBOX_KEY_SOURCE_ESCAPE');assert(!r.calls.includes('public-key-stat'));assert(!r.calls.includes('pool-configuration'));
+ const r=await run({delivery:true,at:'public-key-delivery',code:'SANDBOX_KEY_FINGERPRINT_MISMATCH'});assert.equal(r.diagnostics[0].stage,'public-key-delivery');assert.equal(r.diagnostics[0].code,'SANDBOX_KEY_FINGERPRINT_MISMATCH');assert(!r.calls.includes('public-key-stat'));assert(!r.calls.includes('pool-configuration'));
 });
 test('delivered key is cleaned on startup failure and unknown delivery errors remain sanitized',async()=>{
  const r=await run({delivery:true,at:'metadata',code:'ECONNRESET'});assert(r.calls.includes('key-cleanup'));assert.equal(r.diagnostics[0].code,'ECONNRESET');const unknown=await run({delivery:true,at:'public-key-delivery',code:canary});assert.equal(unknown.diagnostics[0].code,'UNEXPECTED_ERROR');
+});
+for(const code of ['SANDBOX_KEY_PUBLIC_ENV_REQUIRED','SANDBOX_KEY_FINGERPRINT_REQUIRED','SANDBOX_KEY_FINGERPRINT_MISMATCH'])test('Render environment-key error is sanitized before file/database work: '+code,async()=>{
+ const r=await run({delivery:true,at:'public-key-delivery',code,patch:{PAYSTACK_NG_AUTHORITY_PUBLIC_KEY_PEM:canary,PAYSTACK_NG_AUTHORITY_PUBLIC_KEY_SHA256:canary}});assert.equal(r.exitCode,1);assert.deepEqual(r.diagnostics,[{event:'SANDBOX_STARTUP_FAILED',stage:'public-key-delivery',code}]);assert(!r.calls.includes('public-key-read'));assert(!r.calls.includes('pool-configuration'));
 });

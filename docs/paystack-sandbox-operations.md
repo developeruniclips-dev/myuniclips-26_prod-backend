@@ -80,28 +80,35 @@ DB_SSL_CA=/etc/secrets/mysql-ca.pem
 FRONTEND_URL=<F, no trailing slash>
 ALLOWED_ORIGINS=<same F>
 JWT_SECRET=<separate sandbox secret, at least 32 characters>
-PAYSTACK_NG_AUTHORITY_PUBLIC_KEY=/etc/secrets/paystack-authority-public.pem
+PAYSTACK_NG_AUTHORITY_PUBLIC_KEY_PEM=<approved Ed25519 public SPKI PEM with actual line breaks>
+PAYSTACK_NG_AUTHORITY_PUBLIC_KEY_SHA256=<approved lower-case SHA-256 of SPKI DER>
 PAYSTACK_NG_SECRET_KEY=<private Paystack Test secret>
 PAYSTACK_NG_WEBHOOK_SECRET=<private active Test signing secret>
 PAYSTACK_NG_LIVE_CHECKOUT=disabled
 ```
 
-Render public-key delivery: keep the configured mount path above. Only in the
-Render/Linux sandbox, startup resolves this exact managed filename within the
-canonical mount anchored at `/etc/secrets`, checks trusted directory ownership
-and permissions along the entire actual path, and opens a
-bounded regular target with `O_NOFOLLOW`. It accepts only an Ed25519 public SPKI
-PEM, then creates an exclusive `0600` regular copy in a private `0700` directory
-under `/tmp`. Source identity changes, escaped targets, writable source paths,
-hardlinks, private-key envelopes and destination substitution are refused.
-The mount anchor may itself be a Render-managed alias only under the checked,
-non-writable `/etc` parent. Its ownership, identity and canonical target must
-remain stable; broad roots and writable resolved directories are refused.
-The original startup no-symlink check consumes the copy. Only this process's
-authority path is updated so later runtime reads use the same regular file;
-hosted environment settings stay unchanged. Shutdown/startup failure removes
-the owned copy. Do not upload a private key, precreate the destination, change
-this into a general symlink reader, or reuse a copy across restarts.
+Render public-key delivery uses the two service-scoped variables above. Paste
+only the approved public PEM with actual line breaks, not literal backslash-n
+sequences. The fingerprint is SHA-256 of public SPKI DER, not the PEM file hash.
+Review the fingerprint against the owner's approved local public key, then use
+Save only until the replacement source is qualified and deployment authorized.
+Do not put either variable in frontend configuration or a shared environment group.
+
+Only the Linux Render sandbox accepts this delivery mechanism. It rejects
+missing values, values above 4096 bytes, private/multiple/malformed PEM envelopes,
+non-Ed25519 keys and fingerprint mismatches before creating any file. It creates
+an exclusive `0600` regular file in a new private `0700` directory under the
+validated temporary parent, with no-follow descriptor creation, readback,
+inode/content binding and cleanup. Startup's existing no-symlink check consumes
+that file. Only this process's `PAYSTACK_NG_AUTHORITY_PUBLIC_KEY` is replaced for
+later runtime reads; the inherited PEM value is removed after successful delivery.
+No key material, fingerprint mismatch values or environment contents are logged.
+
+There is no Secret File fallback or read of the obsolete authority-key mount.
+After the replacement deployment is qualified, the old authority Secret File and
+its hosted path setting can be removed separately. Retain `mysql-ca.pem` and
+`DB_SSL_CA` unchanged. Do not upload a private key, precreate a destination,
+relax the destination checks, or reuse a generated file across process restarts.
 
 Initially leave `PAYSTACK_NG_TEST_CHECKOUT`, `PAYSTACK_NG_VERIFICATION` and
 `PAYSTACK_NG_WEBHOOKS` disabled. At the separately authorized Test window, set the
@@ -173,7 +180,9 @@ node scripts/paystackSandboxBootstrap.cjs --execute-authorized-sandbox
 ```
 
 Use the same sandbox env above, except `DB_USER=psngsandboxmigrator`, its private
-password and local approved owner-public-key/CA paths. Remove the obsolete
+password and local approved owner-public-key/CA paths. The unchanged bootstrap
+still requires `PAYSTACK_NG_AUTHORITY_PUBLIC_KEY=<local owner-public.pem path>`;
+the Render-only PEM variables do not replace that local file setting. Remove the obsolete
 `SANDBOX_REVIEWER_PUBLIC_KEY` variable; supplying it refuses startup/bootstrap.
 Never provide an `independentReview` field or duplicate signature. The command can only use the
 exact named test database/user and refuses a nonempty database before DDL.
