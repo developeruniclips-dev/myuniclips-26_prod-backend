@@ -62,8 +62,8 @@ for(const [stage,patch,code]of [
 ])test('existing check still refuses: '+code+' / '+Object.keys(patch)[0],async()=>{
  const r=await run({patch});assert.equal(r.exitCode,1);assert.equal(r.diagnostics[0].stage,stage);assert.equal(r.diagnostics[0].code,code);assert.equal(r.poolClosed,0);assert.equal(r.listened,0);
 });
-for(const file of [{regular:false},{symlink:true},{size:262145}])test('public-key file constraints remain fail closed: '+JSON.stringify(file),async()=>{
- const r=await run({file});assert.equal(r.diagnostics[0].stage,'public-key-stat');assert.equal(r.diagnostics[0].code,'SANDBOX_APPROVAL_FILE_INVALID');assert(!r.calls.includes('public-key-read'));assert.equal(r.listened,0);
+for(const [file,code]of [[{regular:false},'SANDBOX_APPROVAL_FILE_NOT_REGULAR'],[{symlink:true},'SANDBOX_APPROVAL_FILE_SYMLINK'],[{size:262145},'SANDBOX_APPROVAL_FILE_TOO_LARGE']])test('public-key file constraints remain fail closed: '+JSON.stringify(file),async()=>{
+ const r=await run({file});assert.equal(r.diagnostics[0].stage,'public-key-stat');assert.equal(r.diagnostics[0].code,code);assert(!r.calls.includes('public-key-read'));assert.equal(r.listened,0);
 });
 for(const error of [fault(canary),canary,null,undefined,{code:'EACCES '+canary},{message:'EACCES',stack:canary},{code:{toJSON(){throw Error('RAW_CODE_SERIALIZED');}},message:canary}])test('unknown/primitive errors and raw details are suppressed: '+typeof error,async()=>{
  const r=await run({at:'metadata',code:canary,error});assert.equal(r.diagnostics[0].code,'UNEXPECTED_ERROR');assert.equal(r.diagnostics[0].stage,'metadata');assert.equal(r.exitCode,1);

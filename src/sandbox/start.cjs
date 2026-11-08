@@ -6,7 +6,7 @@ const fs=require('node:fs');
 const stages=new Set(('settings runtime-user session-secret public-key-stat public-key-read public-key-validation pool-configuration metadata manifest source-identity approval-receiver application listen').split(' '));
 const codes=new Set((
  'SANDBOX_OWNER_MODE_REQUIRED SANDBOX_ISOLATION_REQUIRED SANDBOX_EXTERNAL_CREDENTIAL_FORBIDDEN PAYSTACK_LIVE_NOT_SUPPORTED SANDBOX_FRONTEND_REQUIRED '+
- 'SANDBOX_RUNTIME_USER_REQUIRED SANDBOX_SESSION_SECRET_REQUIRED SANDBOX_APPROVAL_FILE_INVALID SANDBOX_OWNER_ED25519_REQUIRED '+
+ 'SANDBOX_RUNTIME_USER_REQUIRED SANDBOX_SESSION_SECRET_REQUIRED SANDBOX_APPROVAL_FILE_INVALID SANDBOX_APPROVAL_FILE_SYMLINK SANDBOX_APPROVAL_FILE_NOT_REGULAR SANDBOX_APPROVAL_FILE_TOO_LARGE SANDBOX_OWNER_ED25519_REQUIRED '+
  'SANDBOX_DATABASE_IDENTITY_MISMATCH SANDBOX_DATABASE_GRANTS_UNSAFE SANDBOX_MANIFEST_REQUIRED SANDBOX_SOURCE_SYMLINK SANDBOX_RENDER_IDENTITY_REQUIRED SANDBOX_LEGACY_REVIEW_REJECTED SCHEMA_VERIFICATION_REQUIRED '+
  'DB_SSL_INVALID DB_TLS_REQUIRED DB_TLS_HOSTNAME_REQUIRED DB_TLS_CA_REQUIRED DB_TLS_CA_UNREADABLE DB_TLS_CA_INVALID '+
  'ENOENT EISDIR EACCES EPERM ENOTDIR ENOSPC EMFILE MODULE_NOT_FOUND ERR_DLOPEN_FAILED ERR_INVALID_URL ERR_INVALID_ARG_TYPE ERR_OSSL_UNSUPPORTED '+
@@ -23,7 +23,7 @@ async function start(env=process.env){
  stage='runtime-user';if(env.DB_USER!=='psngsandboxapp')fail('SANDBOX_RUNTIME_USER_REQUIRED');
  stage='session-secret';
  if(typeof env.JWT_SECRET!=='string'||env.JWT_SECRET.length<32)fail('SANDBOX_SESSION_SECRET_REQUIRED');
- const read=file=>{stage='public-key-stat';const st=fs.lstatSync(file);if(!st.isFile()||st.isSymbolicLink()||st.size>262144)fail('SANDBOX_APPROVAL_FILE_INVALID');stage='public-key-read';return fs.readFileSync(file,'utf8');};
+ const read=file=>{stage='public-key-stat';const st=fs.lstatSync(file);if(st.isSymbolicLink())fail('SANDBOX_APPROVAL_FILE_SYMLINK');if(!st.isFile())fail('SANDBOX_APPROVAL_FILE_NOT_REGULAR');if(st.size>262144)fail('SANDBOX_APPROVAL_FILE_TOO_LARGE');stage='public-key-read';return fs.readFileSync(file,'utf8');};
  const publicKey=read(env.PAYSTACK_NG_AUTHORITY_PUBLIC_KEY);
  stage='public-key-validation';
  require('./ownerPolicy').ownerKey(publicKey);
