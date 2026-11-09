@@ -6,13 +6,14 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const jwt = require('jsonwebtoken');
-process.env.JWT_SECRET = 'course-api-isolated-test-key';
+process.env.JWT_SECRET = require('node:crypto').randomBytes(32).toString('hex');
 const S=require('../src/utils/authSecurity');
 const fixtureUser=id=>({id,password:'SYNTHETIC_HASH',refresh_token:'sha256:'+'1'.repeat(64),two_factor_enabled:0,two_factor_secret:null,refresh_valid:1,idle_seconds:0});
 let videos = [], uploadCalls = 0, providerMetadata;
 const connection = {
     release() {}, beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {},
     query: async (sql, args = []) => {
+        if (sql.startsWith('SELECT subject_id,scholar_user_id FROM scholar_subjects')) return [[{subject_id:5,scholar_user_id:7}]];
         if (sql.startsWith('SELECT r.name FROM user_roles')) return [[{name:'Scholar'}]];
         if (sql.startsWith('SELECT ss.subject_id')) return [[{subject_id:5}]];
         if(sql.startsWith('INSERT IGNORE INTO course_workflows'))return [{}];
@@ -52,6 +53,12 @@ test.after(() => new Promise(resolve => server.close(resolve)));
 const token = (id = 7, roles = ['Scholar']) => jwt.sign({ id, roles, purpose:'access',session:S.credentialBinding(fixtureUser(id)) }, process.env.JWT_SECRET, { expiresIn: '1h' });
 const request = (path, method = 'GET', body, auth = token()) => fetch(base + path, { method, headers: { Authorization: `Bearer ${auth}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
 const lesson = id => ({ id, subject_id: 5, scholar_user_id: 7, title: `Lesson ${id}`, description: '', approved: 0, sequence_index: id });
+test('submission describes the lesson by title and explains the wait without displaying internal video IDs',async()=>{
+ videos=[{...lesson(88),title:'Dynamics introduction',sequence_index:1,video_url:'https://vimeo.com/123456'}];
+ const asset=providerAdapter.asset(123456);asset.transcode.status='in_progress';
+ try{const response=await request('/videos/scholar/courses/5/submit','POST',{}),body=await response.json();assert.equal(response.status,409);assert.equal(body.code,'LESSON_PROCESSING');assert.equal(body.lessonId,88);assert.match(body.message,/Dynamics introduction/);assert.match(body.message,/several minutes/);assert.match(body.message,/draft is saved/);assert.doesNotMatch(body.message,/Lesson 88|video 88/i);}
+ finally{asset.transcode.status='complete';}
+});
 test('real route authentication/roles and course ownership reject invalid, learner and other Scholar access', async () => {
     assert.equal((await request('/videos/scholar/courses/5', 'GET', null, 'invalid')).status, 403);
     assert.equal((await request('/videos/scholar/courses/5', 'GET', null, token(7, ['Learner']))).status, 403);

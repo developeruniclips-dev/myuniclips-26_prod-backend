@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),mysql=require('mysql2/promise'),fs=require('node:fs'),path=require('node:path'),express=require('express'),jwt=require('jsonwebtoken');
 if(process.env.COURSE_WORKFLOW_ISOLATED_TEST!=='1')throw Error('Explicit local workflow fixture required');
 require('../src/utils/uploadBarrier').shared.resume(); // Explicit isolated fixture admission.
-process.env.JWT_SECRET='COURSE_WORKFLOW_SYNTHETIC';process.env.ADMIN_IP_WHITELIST_ENABLED='false';
+process.env.JWT_SECRET=require('node:crypto').randomBytes(32).toString('hex');process.env.ADMIN_IP_WHITELIST_ENABLED='false';
 let actual,pool,service,server,base,providerMode={},providerAdapter,connections=0,providerState='READY',blockReady,releaseReady,providerReads=0,failAudit=false,queries=[];
 const inject=(file,value)=>{const f=require.resolve(file);require.cache[f]={id:f,filename:f,loaded:true,exports:value};};
 function instrument(db,isConnection=false){return new Proxy(db,{get(t,k){if(k==='query')return async(sql,args)=>{assert.doesNotMatch(sql,/\b(CREATE|ALTER|DROP|TRUNCATE)\b/i);queries.push(sql);if(failAudit&&sql.startsWith('INSERT INTO admin_activity_log'))throw Error('SYNTHETIC_PRIVATE_ERROR');return t.query(sql,args);};if(k==='getConnection')return async()=>{connections++;return instrument(await t.getConnection(),true);};if(k==='release'&&isConnection)return()=>{connections--;t.release();};const value=t[k];return typeof value==='function'?value.bind(t):value;}});}
@@ -119,7 +119,7 @@ test('completed quarantined media cannot submit: safe lesson-specific security e
  const before=(await actual.query('SELECT * FROM videos'))[0],callStart=providerAdapter.calls.length;
  const r=await http('/videos/scholar/courses/10/submit',7,'POST',{minimumLessons:1,skipReadiness:true});
  assert.equal(r.status,409);assert.equal(r.body.code,'LESSON_SECURITY_CHECK_FAILED');assert.equal(r.body.lessonId,101);assert.equal(r.body.readinessState,'UNKNOWN');
- assert.match(r.body.message,/Lesson 101/);assert.doesNotMatch(JSON.stringify(r.body),/900101|vimeo|secret|player_url|access_token/);
+ assert.match(r.body.message,/First/);assert.doesNotMatch(r.body.message,/Lesson 101/);assert.doesNotMatch(JSON.stringify(r.body),/900101|vimeo|secret|player_url|access_token/);
  assert.equal((await state()).state,'DRAFT');assert.equal((await state()).revision,0);
  assert.deepEqual((await actual.query('SELECT * FROM videos'))[0],before);
  assert.equal(providerAdapter.calls.slice(callStart).filter(c=>c.path.includes('/videos/900101?')).length,1);

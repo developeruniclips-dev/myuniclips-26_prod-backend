@@ -25,11 +25,13 @@ function validLessons(videos,subjectId,scholarId){
 }
 function lessonReadinessFailure(video,ready){
  const id=Number(video.id);
- let code='LESSON_READINESS_UNAVAILABLE',message='Lesson '+id+' readiness could not be verified. Review the lesson status before submitting.';
- if(ready.state==='PROCESSING'){code='LESSON_PROCESSING';message='Lesson '+id+' is still processing. Submit when processing is complete.';}
- else if(ready.state==='FAILED'){code='LESSON_PROCESSING_FAILED';message='Lesson '+id+' processing failed. Review the lesson before submitting.';}
- else if(ready.code==='PROVIDER_POLICY_MISMATCH'||ready.state==='READY'){code='LESSON_SECURITY_CHECK_FAILED';message='Lesson '+id+' does not meet the required playback security settings. Ask an Admin to review it; submission remains blocked.';}
- else if(['PROVIDER_PERMISSION','PROVIDER_OWNER_MISMATCH','PROVIDER_OWNER_UNKNOWN','PROVIDER_DOMAIN_MISMATCH','PROVIDER_DOMAINS_UNKNOWN'].includes(ready.code)){code='LESSON_SECURITY_VERIFICATION_UNAVAILABLE';message='Lesson '+id+' playback security could not be verified. Ask an Admin to review it; submission remains blocked.';}
+ const title=typeof video.title==='string'?Array.from(video.title.replace(/[\u0000-\u001f\u007f]/g,' ').trim()).slice(0,200).join(''):'';
+ const label=title?'The lesson “'+title+'”':'A lesson';
+ let code='LESSON_READINESS_UNAVAILABLE',message=label+' readiness could not be verified. Check its preview before submitting.';
+ if(ready.state==='PROCESSING'){code='LESSON_PROCESSING';message=label+' is still being prepared for playback. This can take several minutes, or longer for large videos. Your draft is saved; return later and submit when preparation is complete. Do not upload it again.';}
+ else if(ready.state==='FAILED'){code='LESSON_PROCESSING_FAILED';message=label+' could not be prepared for playback. Contact support before uploading again.';}
+ else if(ready.code==='PROVIDER_POLICY_MISMATCH'||ready.state==='READY'){code='LESSON_SECURITY_CHECK_FAILED';message=label+' does not meet the required playback security settings. Ask an Admin to review it; submission remains blocked.';}
+ else if(['PROVIDER_PERMISSION','PROVIDER_OWNER_MISMATCH','PROVIDER_OWNER_UNKNOWN','PROVIDER_DOMAIN_MISMATCH','PROVIDER_DOMAINS_UNKNOWN'].includes(ready.code)){code='LESSON_SECURITY_VERIFICATION_UNAVAILABLE';message=label+' playback security could not be verified. Ask an Admin to review it; submission remains blocked.';}
  return Object.assign(new Error(message),{status:409,code,lessonId:id,readinessState:['READY','PROCESSING','FAILED','UNKNOWN'].includes(ready.state)?ready.state:'UNKNOWN'});
 }
 function createCourseWorkflow(pool,readiness){
