@@ -73,6 +73,8 @@ app.post(
 );
 
 // Normal middleware (after webhook)
+// Separate raw-body endpoint; Stripe aliases and their parser are unchanged.
+app.post('/api/paystack/webhook',express.raw({type:'application/json',limit:'256kb'}),require('./controller/paystackWebhookController').paystackWebhook);
 // Escaped Unicode metadata can exceed the default JSON limit without exceeding
 // the character limits. Increase capacity only for lesson metadata editing.
 app.use('/api/videos/my/:id', express.json({ limit: '256kb' }));
@@ -111,6 +113,9 @@ app.use("/api", router);
 // Purchase routes
 app.use("/purchase", purchaseRoutes);
 
+// Inert unless explicitly configured for the separately reviewed Live pilot.
+const livePaystack=process.env.PAYSTACK_NG_MODE==='live'?require('./services/paystackNigeria/runtime').mountLiveControls(app,{pool}):undefined;
+
 // ===== SECURITY: Global Error Handler (sanitized messages) =====
 app.use(errorHandler);
 
@@ -123,6 +128,7 @@ const PORT = process.env.PORT || 3001;
 let uploadOperator;
 shutdown.instrument(app);
 const startup = initializeDatabase().then(async () => {
+ if(livePaystack)await livePaystack.initialize();
  if(shutdown.stopping){shutdown.ready();return;}
  uploadOperator=await startUploadOperator(uploadBarrier);
  if(shutdown.stopping){shutdown.ready(undefined,uploadOperator);return;}
@@ -135,7 +141,8 @@ const startup = initializeDatabase().then(async () => {
  });
  shutdown.ready(server,uploadOperator);
  return server;
-}).catch(async () => {
+}).catch(async error => {
+  if(process.env.PAYSTACK_NG_MODE==='live')console.error(JSON.stringify({event:'PAYSTACK_LIVE_STARTUP_REFUSED',stage:'live-readiness',code:require('./services/paystackNigeria/liveRuntime').safeCode(error)}));
   console.error('Database initialization failed; server not started');
   process.exitCode = 1;
   shutdown.ready(undefined,uploadOperator);

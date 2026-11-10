@@ -1,0 +1,13 @@
+'use strict';
+const router=require('express').Router();
+const {authMiddleware}=require('../middleware/auth');
+const {authorizeRoles:requireRole}=require('../middleware/roles');
+const controller=require('../controller/coursePaymentController');
+router.get('/offering',(req,res,next)=>req.headers.authorization?authMiddleware(req,res,next):next(),controller.offering);
+router.use(authMiddleware);
+router.get('/history',controller.history);
+router.get('/status/:orderId',controller.status);
+router.get('/earnings',requireRole('Scholar'),controller.earnings);
+router.post('/checkout',requireRole('Learner','Scholar'),controller.checkout);
+router.post('/verify',requireRole('Learner','Scholar'),controller.verify);
+module.exports=router;

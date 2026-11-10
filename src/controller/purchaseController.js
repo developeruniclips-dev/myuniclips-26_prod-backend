@@ -1,3 +1,4 @@
+const {readBounded,readFailure}=require('../utils/readCapacity');
 const { PurchaseModel } = require("../models/purchases");
 const { pool } = require("../config/db");
 const { annotateCourses } = require('../utils/generalCourses');
@@ -8,7 +9,7 @@ const paymentError = (res, error) => {
   return res.status(error.status || 503).json({ message: error.status ? error.message : 'Unable to verify payment. Please retry or contact support.' });
 };
 const createCheckoutSession = async (req, res) => {
-  try { res.json(await paymentRuntime().payments.createOrder(req.user.id, req.body.subjectId, req.body.scholarId)); }
+  try { const o=await require('../utils/readCapacity').catalogueReads.run(String(req.user.id),()=>require('../services/coursePayments/routing').requireStripeOffering(pool,req.body)); res.json(await paymentRuntime().payments.createOrder(req.user.id,o.subjectId,o.scholarId)); }
   catch (error) { paymentError(res, error); }
 };
 const handleCheckoutSuccess = async (req, res) => {
@@ -60,11 +61,11 @@ const getMySubjectPurchases = async (req, res) => {
 
     res.status(200).json({
       message: "Subject purchases fetched successfully",
-      purchases: await annotateCourses(pool, purchases)
+      purchases: await require('../services/coursePayments/reporting').purchaseEvidence(pool,await annotateCourses(pool,purchases))
     });
   } catch (err) {
     require('../utils/safeLogging').logError("Error fetching subject purchases:", err);
-    res.status(500).json({ message: "Server error" });
+    readFailure(res,err,"Server error");
   }
 };
 
@@ -90,9 +91,7 @@ const getUserPurchases = async (req, res) => {
 
   } catch (err) {
     require('../utils/safeLogging').logError("Error fetching user purchases:", err);
-    return res.status(500).json({
-      message: "Server error fetching purchases"
-    });
+    return readFailure(res,err,"Server error fetching purchases");
   }
 };
 
@@ -104,7 +103,7 @@ const getAllTransactions = async (req, res) => {
     const { pool } = require("../config/db");
     
     // Get individual video purchases (legacy)
-    const [videoPurchases] = await pool.query(`
+    const [videoPurchases] = await readBounded(pool,`
       SELECT 
         t.id as transaction_id,
         t.provider,
@@ -134,10 +133,11 @@ const getAllTransactions = async (req, res) => {
     `);
 
     // Get course bundle purchases
-    const [bundlePurchases] = await pool.query(`
+    const [bundlePurchases] = await readBounded(pool,`
       SELECT 
         sp.id as transaction_id,
-        'stripe' as provider,
+        'unreconciled' as provider,
+        sp.subject_id,sp.scholar_id,sp.transaction_id AS payment_reference,
         sp.transaction_id as provider_transaction_id,
         'completed' as status,
         sp.created_at as transaction_date,
@@ -160,10 +160,11 @@ const getAllTransactions = async (req, res) => {
       JOIN users scholar ON sp.scholar_id = scholar.id
       JOIN subjects subj ON sp.subject_id = subj.id
       ORDER BY sp.created_at DESC
-    `);
+    `, [], 10000-videoPurchases.length);
 
     // Combine and sort by date
-    const allTransactions = [...videoPurchases, ...bundlePurchases].sort(
+    const verifiedBundles=await require('../services/coursePayments/reporting').purchaseEvidence(pool,bundlePurchases);
+    const allTransactions = [...videoPurchases, ...verifiedBundles].sort(
       (a, b) => new Date(b.transaction_date) - new Date(a.transaction_date)
     );
 
@@ -174,7 +175,7 @@ const getAllTransactions = async (req, res) => {
 
   } catch (err) {
     require('../utils/safeLogging').logError("Error fetching transactions:", err);
-    res.status(500).json({ message: "Server error fetching transactions" });
+    readFailure(res,err,"Server error fetching transactions");
   }
 };
 

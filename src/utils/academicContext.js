@@ -1,3 +1,4 @@
+const {readBounded}=require('./readCapacity');
 const universityLabel = university => university.short_name
     ? `${university.name} (${university.short_name})` : university.name;
 
@@ -20,7 +21,7 @@ async function scholarContext(db, userId) {
 
 async function availableSubjects(db, profile) {
     if (!profile?.approved || !profile.university_id) return [];
-    const [rows] = await db.query(`SELECT id, name, degree_programmes, university_id FROM subjects
+    const [rows] = await readBounded(db,`SELECT id, name, degree_programmes, university_id FROM subjects
         WHERE university_id = ? AND degree_programmes = ? ORDER BY name`,
     [profile.university_id, profile.degree]);
     return rows;

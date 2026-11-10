@@ -50,6 +50,15 @@ const app = express(); app.use('/videos/my/:id', express.json({ limit: '256kb' }
 let server, base;
 test.before(async () => { server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); }); base = `http://127.0.0.1:${server.address().port}`; });
 test.after(() => new Promise(resolve => server.close(resolve)));
+// A response can precede its awaited upload cleanup. Join that existing
+// lifecycle before the next fixture request; retain the real admission limits.
+async function uploadsSettled() {
+    const barrier = require('../src/utils/uploadBarrier').shared, deadline = Date.now() + 10000;
+    while (barrier.status().activeTotal) {
+        assert.ok(Date.now() < deadline, 'isolated upload lifecycle must settle');
+        await new Promise(resolve => setTimeout(resolve, 5));
+    }
+}
 const token = (id = 7, roles = ['Scholar']) => jwt.sign({ id, roles, purpose:'access',session:S.credentialBinding(fixtureUser(id)) }, process.env.JWT_SECRET, { expiresIn: '1h' });
 const request = (path, method = 'GET', body, auth = token()) => fetch(base + path, { method, headers: { Authorization: `Bearer ${auth}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
 const lesson = id => ({ id, subject_id: 5, scholar_user_id: 7, title: `Lesson ${id}`, description: '', approved: 0, sequence_index: id });
@@ -81,7 +90,8 @@ test('real multipart upload route accepts video 12, ignores supplied sequence an
     async function upload() {
         const body = new FormData(); body.append('subjectId', '5'); body.append('title', 'Twelfth lesson'); body.append('description', 'Isolated upload'); body.append('sequenceIndex', '999');
         body.append('video', new Blob([require('./fixtures/uploadFiles').mp4], { type: 'video/mp4' }), 'isolated.mp4');
-        return fetch(base + '/videos', { method: 'POST', headers: { Authorization: `Bearer ${token()}` }, body });
+        const result = await fetch(base + '/videos', { method: 'POST', headers: { Authorization: `Bearer ${token()}` }, body });
+        await uploadsSettled(); return result;
     }
     assert.equal((await upload()).status, 201);
     assert.equal(videos.at(-1).sequence_index, 12);
@@ -92,7 +102,8 @@ test('upload and PATCH accept identical full Unicode metadata and reject the sam
     async function upload(title, description) {
         const body = new FormData(); body.append('subjectId', '5'); body.append('title', title); body.append('description', description);
         body.append('video', new Blob([require('./fixtures/uploadFiles').mp4], { type: 'video/mp4' }), 'metadata.mp4');
-        return fetch(base + '/videos', { method: 'POST', headers: { Authorization: `Bearer ${token()}` }, body });
+        const result = await fetch(base + '/videos', { method: 'POST', headers: { Authorization: `Bearer ${token()}` }, body });
+        await uploadsSettled(); return result;
     }
     for (const [title, description] of [
         ['Normal title', 'Short text'], ['Near maximum '.padEnd(199, 'ä'), 'x'.repeat(9999)],

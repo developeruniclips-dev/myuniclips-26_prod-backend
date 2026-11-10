@@ -1,3 +1,4 @@
+const {readBounded}=require('../utils/readCapacity');
 const { pool } = require("../config/db");
 const {ACTIVE_ENTITLEMENT_SQL,activeEntitlementSql}=require('../services/contentAuthorization');
 
@@ -15,7 +16,7 @@ const PurchaseModel = {
     pool.query("SELECT * FROM purchases WHERE buyer_user_id = ? AND video_id = ?", [buyerUserId, videoId]),
 
   findByUser: (buyerUserId) =>
-    pool.query("SELECT p.*, v.title, v.subject_id, v.scholar_user_id AS scholar_id FROM purchases p JOIN videos v ON p.video_id = v.id WHERE p.buyer_user_id = ?", [buyerUserId]),
+    readBounded(pool,"SELECT p.*, v.title, v.subject_id, v.scholar_user_id AS scholar_id FROM purchases p JOIN videos v ON p.video_id = v.id WHERE p.buyer_user_id = ?", [buyerUserId]),
 
   savePurchase: (user_id, video_id, amount, transaction_id) => {
     return pool.query(
@@ -66,7 +67,7 @@ const PurchaseModel = {
 
   // Get all subject bundles purchased by user with access status
   getUserSubjectPurchases: (buyerUserId) => {
-    return pool.query(
+    return readBounded(pool,
       `SELECT sp.*, s.name as subject_name, u.fname as scholar_fname, u.lname as scholar_lname,
         CASE WHEN ${activeEntitlementSql('sp')} THEN 1 ELSE 0 END as is_active,
         DATEDIFF(sp.access_expires_at, NOW()) as days_remaining,
@@ -82,7 +83,7 @@ const PurchaseModel = {
 
   // Get expired purchases (for repurchase prompts)
   getExpiredPurchases: (buyerUserId) => {
-    return pool.query(
+    return readBounded(pool,
       `SELECT sp.*, s.name as subject_name, u.fname as scholar_fname, u.lname as scholar_lname,
         s.bundle_price as current_price
        FROM subject_purchases sp
@@ -98,7 +99,7 @@ const PurchaseModel = {
 
   // Get all sales for a scholar (for earnings)
   getScholarSubjectSales: (scholarId) => {
-    return pool.query(
+    return readBounded(pool,
       `SELECT sp.*, s.name as subject_name, u.fname as buyer_fname, u.lname as buyer_lname
        FROM subject_purchases sp
        JOIN subjects s ON sp.subject_id = s.id

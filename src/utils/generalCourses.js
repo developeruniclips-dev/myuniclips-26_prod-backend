@@ -52,7 +52,7 @@ async function annotateCourses(db, offerings) {
         WHERE s.university_id IN (SELECT university_id FROM subjects WHERE id IN (?)) LIMIT 10001`, [ids]);
     if(subjects.length>10000)throw Object.assign(new Error("Academic catalogue is temporarily unavailable"),{status:503});
     const index = buildGeneralCourseIndex(subjects);
-    return offerings.map(row => ({ ...row, ...index.get(Number(row.subject_id)) }));
+    return require('../services/coursePayments/routing').attachPayments(db,offerings.map(row => ({ ...row, ...index.get(Number(row.subject_id)) })));
 }
 
 function catalogueSummary(subjects) {

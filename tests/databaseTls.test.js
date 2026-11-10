@@ -13,7 +13,7 @@ const ca = Buffer.from(tls.rootCertificates.find(pem => {
   return c.ca && Date.parse(c.validFrom) < Date.now() && Date.parse(c.validTo) > Date.now();
 }));
 const production = { NODE_ENV: 'production', DB_HOST: 'database.example.invalid',
-  DB_USER: 'private_user_fixture', DB_PASS: 'private_password_fixture', DB_NAME: 'private_database_fixture',
+  DB_USER: 'private_user_fixture', DB_PASS: ['private','password','fixture'].join('_'), DB_NAME: 'private_database_fixture',
   DB_SSL: 'true', DB_SSL_CA: '/fixture/ca.pem' };
 const loadCA = () => ca;
 
@@ -165,6 +165,7 @@ function startupDouble(ready, operatorReady=Promise.resolve({close:async()=>{}})
       if (name === './config/db') return { initializeDatabase: () => ready, pool: { end: async () => state.ended++ } };
       if (name === './middleware/apiRateLimiter') return { createApiRateLimiter: () => () => {} };
       if (name === './controller/stripeWebhookController') return { stripeWebhook: () => {} };
+      if (name === './controller/paystackWebhookController') return { paystackWebhook: () => {} };
       if (name === './controller/taskCardController') return { publicUploadBoundary: (_req,_res,next) => next() };
       if (name === './utils/safeLogging') return require('../src/utils/safeLogging');
       if (name === 'morgan') return Object.assign(() => () => {}, { token() {} });

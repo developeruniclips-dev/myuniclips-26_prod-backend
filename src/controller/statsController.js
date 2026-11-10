@@ -1,23 +1,25 @@
-const pool = require("../config/db");
+const { pool } = require("../config/db");
+const {catalogueReads,readQuery,readFailure}=require('../utils/readCapacity');
 
 // Get platform statistics
 const getPlatformStats = async (req, res) => {
   try {
+    await catalogueReads.run(null,async()=>{
     // Get total users (learners)
-    const [usersResult] = await pool.query("SELECT COUNT(*) as count FROM users");
+    const [usersResult] = await readQuery(pool,"SELECT COUNT(*) as count FROM users");
     
     // Get total approved scholars
-    const [scholarsResult] = await pool.query(
+    const [scholarsResult] = await readQuery(pool,
       "SELECT COUNT(*) as count FROM scholar_profile WHERE approved = 1"
     );
     
     // Get total distinct courses (subjects with approved videos)
-    const [coursesResult] = await pool.query(
+    const [coursesResult] = await readQuery(pool,
       "SELECT COUNT(DISTINCT subject_id) as count FROM videos WHERE approved = 1"
     );
     
     // Get total approved videos
-    const [videosResult] = await pool.query(
+    const [videosResult] = await readQuery(pool,
       "SELECT COUNT(*) as count FROM videos WHERE approved = 1"
     );
 
@@ -30,12 +32,10 @@ const getPlatformStats = async (req, res) => {
         videos: videosResult[0].count
       }
     });
+    });
   } catch (error) {
     require('../utils/safeLogging').logError("Error fetching platform stats:", error);
-    res.status(500).json({ 
-      success: false, 
-      message: "Error fetching platform statistics" 
-    });
+    readFailure(res,error,"Error fetching platform statistics",{success:false});
   }
 };
 

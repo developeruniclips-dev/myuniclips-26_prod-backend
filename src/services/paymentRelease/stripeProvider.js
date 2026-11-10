@@ -14,9 +14,7 @@ function createReleaseStripeProvider(stripe, frontendUrl) {
             }, { idempotencyKey: `lv_checkout_${snapshot.nonce}` });
         },
         async findReleaseTransfers(group) {
-            const found = [];
-            for await (const transfer of stripe.transfers.list({ transfer_group: group, limit: 100 })) found.push(transfer);
-            return found;
+            return require('../payments/boundedTransfers').findBoundedTransfers(stripe, group);
         },
         createReleaseTransfer: instruction => stripe.transfers.create({ amount: instruction.amountMinor, currency: 'eur',
             destination: instruction.destination, source_transaction: instruction.chargeId, transfer_group: instruction.group,
