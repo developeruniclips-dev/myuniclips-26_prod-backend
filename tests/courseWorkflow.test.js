@@ -1,19 +1,20 @@
 // Synthetic local MySQL only; no dotenv, configured DB, provider/email, or credentials.
 const test=require('node:test'),assert=require('node:assert/strict'),mysql=require('mysql2/promise'),fs=require('node:fs'),path=require('node:path'),express=require('express'),jwt=require('jsonwebtoken');
+const leaseScope=new (require('node:async_hooks').AsyncLocalStorage)();
 if(process.env.COURSE_WORKFLOW_ISOLATED_TEST!=='1')throw Error('Explicit local workflow fixture required');
 require('../src/utils/uploadBarrier').shared.resume(); // Explicit isolated fixture admission.
 process.env.JWT_SECRET=require('node:crypto').randomBytes(32).toString('hex');process.env.ADMIN_IP_WHITELIST_ENABLED='false';
 let actual,pool,service,server,base,providerMode={},providerAdapter,connections=0,providerState='READY',blockReady,releaseReady,providerReads=0,failAudit=false,queries=[];
 const inject=(file,value)=>{const f=require.resolve(file);require.cache[f]={id:f,filename:f,loaded:true,exports:value};};
-function instrument(db,isConnection=false){return new Proxy(db,{get(t,k){if(k==='query')return async(sql,args)=>{assert.doesNotMatch(sql,/\b(CREATE|ALTER|DROP|TRUNCATE)\b/i);queries.push(sql);if(failAudit&&sql.startsWith('INSERT INTO admin_activity_log'))throw Error('SYNTHETIC_PRIVATE_ERROR');return t.query(sql,args);};if(k==='getConnection')return async()=>{connections++;return instrument(await t.getConnection(),true);};if(k==='release'&&isConnection)return()=>{connections--;t.release();};const value=t[k];return typeof value==='function'?value.bind(t):value;}});}
-const readiness={async read(){providerReads++;assert.equal(connections,0,'No DB connection may wait for provider readiness');if(blockReady){blockReady=false;await new Promise(r=>releaseReady=r);}return {state:providerState,policyVerified:providerState==='READY'};}};
+function instrument(db,isConnection=false,scope){return new Proxy(db,{get(t,k){if(k==='query')return async(sql,args)=>{assert.doesNotMatch(sql,/\b(CREATE|ALTER|DROP|TRUNCATE)\b/i);queries.push(sql);if(failAudit&&sql.startsWith('INSERT INTO admin_activity_log'))throw Error('SYNTHETIC_PRIVATE_ERROR');return t.query(sql,args);};if(k==='getConnection')return async()=>{const owner=leaseScope.getStore();connections++;if(owner)owner.connections++;return instrument(await t.getConnection(),true,owner);};if(k==='release'&&isConnection)return()=>{connections--;if(scope)scope.connections--;t.release();};const value=t[k];return typeof value==='function'?value.bind(t):value;}});}
+const readiness={async read(){providerReads++;assert.equal(leaseScope.getStore()?.connections??connections,0,'This operation must release its DB connection before provider readiness');if(blockReady){blockReady=false;await new Promise(r=>releaseReady=r);}return {state:providerState,policyVerified:providerState==='READY'};}};
 const actor=id=>({id,roles:['SuperAdmin']});
 async function state(){return (await actual.query('SELECT * FROM course_workflows WHERE offering_id=1'))[0][0];}
 async function token(id){const[[row]]=await actual.query('SELECT * FROM users WHERE id=?',[id]);return jwt.sign({id,roles:id===7?['Scholar']:id===3?['Admin']:id===4?['SuperAdmin']:['Learner'],purpose:'access',session:require('../src/utils/authSecurity').credentialBinding(row)},process.env.JWT_SECRET,{expiresIn:'1h'});}
 async function http(route,id=7,method='GET',body){const r=await fetch(base+route,{method,headers:{...(id?{Authorization:'Bearer '+await token(id)}:{}),...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,body:await r.json()};}
 const deny=(work,status)=>assert.rejects(work,e=>e.status===status);
-async function submit(){return service.transition(actor(7),1,'submit');}
-async function publish(){return service.transition(actor(3),1,'publish',{confirmation:'PUBLISH COURSE 1',count:2});}
+async function submit(){return leaseScope.run({connections:0},()=>service.transition(actor(7),1,'submit'));}
+async function publish(){return leaseScope.run({connections:0},()=>service.transition(actor(3),1,'publish',{confirmation:'PUBLISH COURSE 1',count:2}));}
 test.before(async()=>{
  const config={host:'127.0.0.1',port:33316,user:'root',password:'',database:'uniclips_course_workflow_test'};
  const admin=await mysql.createConnection({...config,database:undefined});await admin.query('CREATE DATABASE IF NOT EXISTS uniclips_course_workflow_test');await admin.end();actual=mysql.createPool({...config,connectionLimit:8});assert.equal((await actual.query('SELECT DATABASE() AS name'))[0][0].name,config.database);
@@ -138,4 +139,19 @@ test('safe errors distinguish processing, failed processing, uncertified READY a
  await assert.rejects(isolated.transition(actor(7),1,'submit'),e=>e.status===409&&e.code===code&&e.lessonId===101&&!/PRIVATE_PROVIDER_SECRET/.test(e.message));
  assert.equal((await state()).state,'DRAFT');assert.equal((await state()).revision,0);
  }
+});
+
+test('public covers require actual published approvals, use the canonical first lesson and revoke cached access immediately',async()=>{
+ const seen=[],image=Buffer.from([255,216,255,224,0,16,74,70,73,70,0,1,255,217]);
+ const handler=require('../src/services/courseCovers').createCourseCovers({pool:actual,privacy:{verify:async reference=>{seen.push(reference);return{state:'READY',policyVerified:true};}},client:{request(o,done){const uri=o.path.split('?')[0];done(null,{uri,pictures:{sizes:[{width:640,height:360,link:'https://i.vimeocdn.com/video/synthetic.jpg'}]}},200);}},download:async()=>({bytes:image,type:'image/jpeg'})});
+ const read=async()=>{const r={statusCode:200,set(){return this;},type(){return this;},status(n){this.statusCode=n;return this;},send(b){this.body=b;},end(){}};await handler({params:{subjectId:'10',scholarId:'7'}},r);return r;};
+ assert.equal((await read()).statusCode,404);assert.equal(seen.length,0);
+ await submit();await publish();assert.deepEqual((await read()).body,image);assert.deepEqual(seen,['https://vimeo.com/900101']);
+ await actual.query('UPDATE scholar_profile SET approved=0 WHERE user_id=7');assert.equal((await read()).statusCode,404);
+ await actual.query('UPDATE scholar_profile SET approved=1 WHERE user_id=7');await actual.query('UPDATE scholar_subjects SET approved=0 WHERE id=1');assert.equal((await read()).statusCode,404);
+ await actual.query('UPDATE scholar_subjects SET approved=1 WHERE id=1');await actual.query("UPDATE course_workflows SET state='CHANGES_REQUESTED' WHERE offering_id=1");assert.equal((await read()).statusCode,404);
+ await actual.query("UPDATE course_workflows SET state='PUBLISHED' WHERE offering_id=1");await actual.query('UPDATE videos SET approved=0 WHERE id=102');assert.equal((await read()).statusCode,404);
+ await actual.query('UPDATE videos SET approved=1');await actual.query('UPDATE videos SET sequence_index=CASE WHEN id=102 THEN 1 ELSE 2 END');assert.equal((await read()).statusCode,200);assert.deepEqual(seen,['https://vimeo.com/900101','https://vimeo.com/900102']);
+ await actual.query('UPDATE videos SET sequence_index=NULL WHERE id=101');assert.equal((await read()).statusCode,404);await actual.query('UPDATE videos SET sequence_index=1');assert.equal((await read()).statusCode,404);
+ assert.equal((await actual.query('SELECT COUNT(*) AS n FROM subject_purchases'))[0][0].n,0);
 });
