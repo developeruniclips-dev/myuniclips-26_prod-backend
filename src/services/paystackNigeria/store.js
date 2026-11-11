@@ -39,7 +39,8 @@ function createMysqlStore({ pool, resolveHistoricalSales, schemaMetadata } = {})
                     JOIN course_workflows cw ON cw.offering_id=ss.id AND cw.state='PUBLISHED'
                     WHERE n.subject_id=? AND n.scholar_id=? AND n.merchant_account=? AND n.environment=?
                     AND n.approved=1 AND c.code='NG' AND (SELECT COUNT(*) FROM countries cc WHERE cc.code=c.code)=1 AND sp.degree=s.degree_programmes
-                    AND (sp.university=u.name OR sp.university=CONCAT(u.name,' (',u.short_name,')'))
+                    AND (sp.university COLLATE utf8mb4_general_ci=u.name COLLATE utf8mb4_general_ci
+                        OR sp.university COLLATE utf8mb4_general_ci=CONCAT(u.name,' (',u.short_name,')') COLLATE utf8mb4_general_ci)
                     AND EXISTS (SELECT 1 FROM videos v WHERE v.subject_id=s.id AND v.scholar_user_id=n.scholar_id AND v.approved=1)`,
                 [subjectId, scholarId, merchantAccount, environment]);
                 if (rows.length !== 1) fail('OFFERING_UNAVAILABLE');
