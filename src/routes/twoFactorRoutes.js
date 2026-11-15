@@ -1,35 +1,28 @@
 const { Router } = require("express");
-const { 
-    setup2FA, 
-    verify2FA, 
-    validate2FA, 
-    disable2FA, 
+const {
+    setup2FA,
+    verify2FA,
+    validate2FA,
+    disable2FA,
     get2FAStatus,
     regenerateBackupCodes
 } = require("../controller/twoFactorController");
 const { authMiddleware } = require("../middleware/auth");
 const { authorizeRoles } = require("../middleware/roles");
-const rateLimit = require("express-rate-limit");
+const { createAuthRateLimits } = require('../middleware/authRateLimits');
+const limits = createAuthRateLimits();
+const { sharedAuthAdmission: admission } = require('../middleware/authAdmission');
 
 const router = Router();
 
-// Rate limiting for 2FA validation (prevent brute force)
-const twoFactorLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // 5 attempts per 15 minutes
-    message: { error: "Too many 2FA attempts, please try again in 15 minutes" },
-    standardHeaders: true,
-    legacyHeaders: false,
-});
-
 // Protected routes - require authentication
 router.get('/status', authMiddleware, get2FAStatus);
-router.post('/setup', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), twoFactorLimiter, setup2FA);
-router.post('/verify', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), twoFactorLimiter, verify2FA);
-router.post('/disable', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), twoFactorLimiter, disable2FA);
-router.post('/backup-codes', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), twoFactorLimiter, regenerateBackupCodes);
+router.post('/setup', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), limits.protectedFactorAccount, admission.wrap(setup2FA));
+router.post('/verify', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), limits.protectedFactorAccount, admission.wrap(verify2FA));
+router.post('/disable', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), limits.protectedFactorAccount, admission.wrap(disable2FA));
+router.post('/backup-codes', authMiddleware, authorizeRoles("Admin", "SuperAdmin"), limits.protectedFactorAccount, admission.wrap(regenerateBackupCodes));
 
 // Public route for login 2FA validation (called after initial login)
-router.post('/validate', twoFactorLimiter, validate2FA);
+router.post('/validate', limits.factorNetwork, limits.factorAccount, admission.wrap(validate2FA));
 
 module.exports = router;

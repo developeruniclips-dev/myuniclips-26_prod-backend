@@ -1,24 +1,17 @@
 const { Router } = require("express");
-const rateLimit = require("express-rate-limit");
+const { createAuthRateLimits } = require('../middleware/authRateLimits');
+const limits = createAuthRateLimits();
+const { sharedAuthAdmission: admission, sharedRecoveryAdmission: recoveryAdmission } = require('../middleware/authAdmission');
 const { requestPasswordReset, resetPassword, changePassword } = require("../controller/passwordController");
 const { authMiddleware } = require("../middleware/auth");
 
 const router = Router();
 
-// ===== SECURITY: Strict rate limiting for password reset =====
-const passwordResetLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // 5 attempts per 15 minutes
-    message: { error: "Too many password reset attempts, please try again in 15 minutes" },
-    standardHeaders: true,
-    legacyHeaders: false,
-});
-
 // Public routes (no auth required) - with rate limiting
-router.post("/forgot", passwordResetLimiter, requestPasswordReset);
-router.post("/reset", passwordResetLimiter, resetPassword);
+router.post("/forgot", limits.recoveryNetwork, limits.recoveryEmail, recoveryAdmission.wrap(requestPasswordReset));
+router.post("/reset", limits.recoveryNetwork, limits.resetEmail, admission.wrap(resetPassword));
 
 // Protected routes (auth required)
-router.post("/change", authMiddleware, changePassword);
+router.post("/change", authMiddleware, admission.wrap(changePassword));
 
 module.exports = router;
