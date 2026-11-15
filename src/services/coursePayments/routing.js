@@ -13,7 +13,7 @@ function paymentDecision(row,{stripeReady=stripeConfigured()}={}){
  Object.assign(payment,country==='NG'?{provider:'paystack',currency:ngPolicy.currency,amountMinor:ngPolicy.totalMinor,policyVersion:ngPolicy.version}:{provider:'stripe',currency:'EUR',policyVersion:'fi-approved-eur-v1'});
  payment.entity=country==='NG'?ngPolicy.entity:'UNICLIPS_OY';
  if(country==='FI'){try{payment.amountMinor=toMinor(row.bundle_price,'EUR');if(payment.amountMinor<50)throw error('INVALID_PRICE');}catch{payment.unavailableCode='INVALID_PRICE';return payment;}}
- const eligible=Number(row.application_approved)===1&&Number(row.profile_approved)===1&&row.workflow_state==='PUBLISHED'&&Number(row.has_content)===1;
+ const eligible=Number(row.application_approved)===1&&Number(row.profile_approved)===1&&row.workflow_state==='PUBLISHED'&&Number(row.has_content)===1&&Number(row.public_hidden||0)===0;
  payment.unavailableCode=!eligible?'OFFERING_UNAVAILABLE':country==='NG'?'PAYSTACK_CHECKOUT_DISABLED':!stripeReady?'STRIPE_UNAVAILABLE':null;
  payment.checkoutEnabled=payment.unavailableCode===null;
  payment.contextVersion=createHash('sha256').update(JSON.stringify([Number(row.id??row.subject_id),Number(row.scholar_id),Number(row.university_id),Number(row.country_id),country,payment.policyVersion,payment.amountMinor])).digest('hex');
@@ -21,7 +21,7 @@ function paymentDecision(row,{stripeReady=stripeConfigured()}={}){
 }
 const select=`SELECT s.id,s.university_id,s.bundle_price,c.id AS country_id,c.code AS university_country_code,
  (SELECT COUNT(*) FROM countries cc WHERE cc.code=c.code) AS country_occurrences,
- ss.scholar_user_id AS scholar_id,ss.approved AS application_approved,sp.approved AS profile_approved,cw.state AS workflow_state,
+ ss.scholar_user_id AS scholar_id,ss.approved AS application_approved,sp.approved AS profile_approved,cw.state AS workflow_state,NOT (${require('../courseVisibility').publicVisibilitySql('ss')}) AS public_hidden,
  EXISTS(SELECT 1 FROM videos v WHERE v.subject_id=s.id AND v.scholar_user_id=ss.scholar_user_id AND v.approved=1) AS has_content
  FROM subjects s LEFT JOIN universities u ON u.id=s.university_id LEFT JOIN countries c ON c.id=u.country_id
  LEFT JOIN scholar_subjects ss ON ss.subject_id=s.id LEFT JOIN scholar_profile sp ON sp.user_id=ss.scholar_user_id

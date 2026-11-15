@@ -17,8 +17,9 @@ function createServices({ store, provider, policy = createPolicy(), now = Date.n
             o.entity !== policy.entity || o.policyVersion !== policy.version || o.accessMonths !== 5) fail('ORDER_CONTEXT_MISMATCH');
         amount(o.totalMinor, o.currency);
     };
-    async function offering(tx, subjectId, scholarId) {
+    async function offering(tx, subjectId, scholarId, existingPayment=false) {
         const row = await tx.offering(subjectId, scholarId, policy.merchantAccount, policy.environment);
+        if(row.publicHidden===true&&!existingPayment)fail('OFFERING_UNAVAILABLE');
         if (row.entity !== policy.entity || row.policyVersion !== policy.version) fail('OFFERING_POLICY_MISMATCH');
         amount(row.totalMinor, row.currency);
         if(!Number.isSafeInteger(row.universityId)||!Number.isSafeInteger(row.countryId)||row.countryCode!=='NG'||!Number.isSafeInteger(row.offeringRevision)||!row.routeRevision)fail('OFFERING_CONTEXT_REQUIRED');
@@ -100,7 +101,8 @@ function createServices({ store, provider, policy = createPolicy(), now = Date.n
                 }
                 if (o.state !== 'created') fail('ORDER_REQUIRES_REVIEW');
                 if (!locked) fail('ORDER_STATE_CHANGED');
-                const academic=await offering(tx,o.subjectId,o.scholarId);
+                // A visibility change must not strand a payment already initiated.
+                const academic=await offering(tx,o.subjectId,o.scholarId,true);
                 if(['universityId','countryId','countryCode','offeringRevision','routeRevision'].some(k=>academic[k]!==o[k]))fail('ORDER_CONTEXT_CHANGED');
                 if (await tx.existingPurchase(buyerId,o.subjectId,o.scholarId)) fail('REPURCHASE_BLOCKED');
                 const purchases = await tx.sales(o.subjectId,o.scholarId);

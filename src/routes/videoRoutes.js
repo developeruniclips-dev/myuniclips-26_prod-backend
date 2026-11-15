@@ -17,6 +17,7 @@ videoRoutes.put('/scholar/courses/:subjectId/order', authMiddleware, authorizeRo
 videoRoutes.patch('/my/:id', authMiddleware, authorizeRoles('Scholar'), content.editVideo);
 
 videoRoutes.get('/all-videos', getAllVideos);
+videoRoutes.get('/learning-catalogue',authMiddleware,require('../controller/videoController').getLearningVideos);
 // Only the currently published first lesson can supply a public still image.
 videoRoutes.get('/covers/:subjectId/:scholarId',require('../services/courseCovers').createCourseCovers({pool:require('../config/db').pool,client:require('../config/vimeo')}));
 

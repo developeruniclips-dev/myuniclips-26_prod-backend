@@ -55,7 +55,7 @@ const PUBLIC_FIRST=`SELECT v.id,v.video_url FROM scholar_subjects ss
  JOIN scholar_profile sp ON sp.user_id=ss.scholar_user_id AND sp.approved=1
  JOIN course_workflows cw ON cw.offering_id=ss.id AND cw.state='PUBLISHED'
  JOIN videos v ON v.subject_id=ss.subject_id AND v.scholar_user_id=ss.scholar_user_id
- WHERE ss.subject_id=? AND ss.scholar_user_id=? AND ss.approved=1
+ WHERE ss.subject_id=? AND ss.scholar_user_id=? AND ss.approved=1 AND ${require('./courseVisibility').publicVisibilitySql('ss')}
  AND (SELECT COUNT(*) FROM scholar_subjects context WHERE context.subject_id=ss.subject_id AND context.scholar_user_id=ss.scholar_user_id)=1
  AND NOT EXISTS (SELECT 1 FROM videos unapproved WHERE unapproved.subject_id=ss.subject_id AND unapproved.scholar_user_id=ss.scholar_user_id AND (unapproved.approved IS NULL OR unapproved.approved<>1))
  AND NOT EXISTS (SELECT 1 FROM videos invalid_order WHERE invalid_order.subject_id=ss.subject_id AND invalid_order.scholar_user_id=ss.scholar_user_id AND (invalid_order.sequence_index IS NULL OR invalid_order.sequence_index<1))

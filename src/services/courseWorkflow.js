@@ -74,9 +74,9 @@ function createCourseWorkflow(pool,readiness){
   const args=[],filter=query.state&&query.state!=='ALL'?query.state:null;
   if(filter&&!['DRAFT','SUBMITTED_FOR_REVIEW','CHANGES_REQUESTED','PUBLISHED'].includes(filter))fail(400,'Invalid course status');
   if(filter)args.push(filter);
-  return require('./operations/data').paginate(pool,`ss.id,ss.subject_id,ss.scholar_user_id,s.name AS course,u.fname,u.lname,COALESCE(cw.state,'DRAFT') AS state,cw.feedback,cw.submitted_at,cw.reviewed_at,
+  return require('./operations/data').paginate(pool,`ss.id,ss.subject_id,ss.scholar_user_id,s.name AS course,u.fname,u.lname,COALESCE(cw.state,'DRAFT') AS state,cw.feedback,cw.submitted_at,cw.reviewed_at,COALESCE(cv.hidden,0) AS public_hidden,COALESCE(cv.revision,0) AS visibility_revision,
    (SELECT COUNT(*) FROM videos v WHERE v.subject_id=ss.subject_id AND v.scholar_user_id=ss.scholar_user_id) AS lesson_count`,
-   `FROM scholar_subjects ss JOIN subjects s ON s.id=ss.subject_id JOIN users u ON u.id=ss.scholar_user_id LEFT JOIN course_workflows cw ON cw.offering_id=ss.id
+   `FROM scholar_subjects ss JOIN subjects s ON s.id=ss.subject_id JOIN users u ON u.id=ss.scholar_user_id LEFT JOIN course_workflows cw ON cw.offering_id=ss.id LEFT JOIN course_visibility cv ON cv.offering_id=ss.id
    WHERE EXISTS (SELECT 1 FROM videos v WHERE v.subject_id=ss.subject_id AND v.scholar_user_id=ss.scholar_user_id)${filter?" AND COALESCE(cw.state,'DRAFT')=?":''}`,args,query,"COALESCE(cw.state,'DRAFT')='SUBMITTED_FOR_REVIEW' DESC,ss.id DESC");
  }
  return {transition,reserve,finish,ambiguous,list};

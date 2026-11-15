@@ -19,6 +19,7 @@ router.use(adminIPWhitelist,c.requireStaff);
 const courseWorkflow=require('../controller/courseWorkflowController');
 router.get('/course-workflows',courseWorkflow.list);
 router.get('/course-workflows/:id',courseWorkflow.detail);
+router.post('/course-workflows/:id/visibility',c.requireOwner,courseWorkflow.visibility);
 router.post('/course-workflows/:id/:action',courseWorkflow.transition);
 router.get('/overview',c.handler(()=>c.data.overview()));
 router.get('/people',c.handler(req=>c.data.people(req.query)));

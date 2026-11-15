@@ -39,7 +39,8 @@ function createContentAuthorization(pool){
     subjectId=positiveId(row.subject_id);scholarId=positiveId(row.scholar_user_id);
    }
    if(subjectId===undefined||scholarId===undefined)fail(400,'Course and Scholar identifiers are required');
-   const [offerings]=await db.query(`SELECT s.id,s.name,s.bundle_price,ss.approved AS application_approved,sp.approved AS profile_approved,cw.state AS workflow_state,cw.legacy_published
+   const [offerings]=await db.query(`SELECT s.id,s.name,s.bundle_price,ss.approved AS application_approved,sp.approved AS profile_approved,cw.state AS workflow_state,cw.legacy_published,
+    NOT (${require('./courseVisibility').publicVisibilitySql('ss')}) AS public_hidden
     FROM subjects s LEFT JOIN scholar_subjects ss ON ss.subject_id=s.id AND ss.scholar_user_id=?
     LEFT JOIN scholar_profile sp ON sp.user_id=ss.scholar_user_id LEFT JOIN course_workflows cw ON cw.offering_id=ss.id WHERE s.id=?`,[scholarId,subjectId]);
    const offering=offerings.length===1?offerings[0]:null;
@@ -54,6 +55,7 @@ function createContentAuthorization(pool){
    if(!staff&&!own&&(!ordered||!videos.some(v=>Number(v.approved)===1)))fail(404,'Content unavailable');
    let active=false;
    if(!staff&&!own){const [purchases]=await db.query(`SELECT id FROM subject_purchases WHERE buyer_user_id=? AND subject_id=? AND scholar_id=? AND ${ACTIVE_ENTITLEMENT_SQL}`,[userId,subjectId,scholarId]);active=purchases.length>0;}
+   if(Number(offering.public_hidden)===1&&!staff&&!own&&!active)fail(404,'Content unavailable');
    const firstId=ordered?Number(videos[0].id):null;
    const visible=videos.filter(v=>staff||own||Number(v.approved)===1).map(v=>({...publicLesson(v),is_first_preview:Number(v.id)===firstId,is_free:Number(v.id)===firstId?1:0,can_access:staff||own||active||Number(v.id)===firstId}));
    let playback;

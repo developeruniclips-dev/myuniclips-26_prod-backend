@@ -33,14 +33,54 @@ test.before(async()=>{
  await actual.query('CREATE TABLE countries(id INT PRIMARY KEY,code CHAR(2))');await actual.query("INSERT INTO countries VALUES(1,'FI')");
  await actual.query('CREATE TABLE universities(id INT PRIMARY KEY,name VARCHAR(100),short_name VARCHAR(20),country_id INT)');await actual.query("INSERT INTO universities VALUES(1,'Synthetic FI university','SYN',1)");
  await actual.query('ALTER TABLE subjects ADD university_id INT DEFAULT 1,ADD degree_programmes VARCHAR(100) DEFAULT NULL');
+ await actual.query('ALTER TABLE scholar_profile ADD university VARCHAR(100) NULL,ADD degree VARCHAR(100) NULL');
+ await actual.query('ALTER TABLE scholar_subjects ADD expertise TEXT NULL');
  for(const sql of require('./fixtures/courseWorkflowSchema.cjs').split(';').map(x=>x.replace(/--[^\n]*/g,'').trim()).filter(Boolean))await actual.query(sql);
  pool=instrument(actual);inject('../src/config/db',{pool});providerAdapter=require('./fixtures/vimeoPolicy').syntheticVimeo({beforeRequest(){assert.equal(connections,0);},state:()=>providerMode});inject('../src/config/vimeo',{...providerAdapter,upload(file,opts,done){assert.equal(connections,0);assert.deepEqual(opts.privacy,{view:'nobody',embed:'private',download:false});providerAdapter.uploaded('/videos/900999',opts);done('/videos/900999');}});
  service=require('../src/services/courseWorkflow').createCourseWorkflow(pool,readiness);
  const app=express();app.use(express.json());app.use('/videos',require('../src/routes/videoRoutes'));app.use('/operations',require('../src/routes/operationsRoutes'));server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));base='http://127.0.0.1:'+server.address().port;
 });
 test.after(async()=>{if(server)await new Promise(r=>server.close(r));if(actual)await actual.end();});
-test.beforeEach(async()=>{providerState='READY';providerMode={};providerAdapter.assets.clear();blockReady=false;releaseReady=null;failAudit=false;queries=[];providerReads=0;await actual.query('DELETE FROM user_roles WHERE user_id=7');await actual.query('INSERT INTO user_roles VALUES(7,4)');await actual.query('DELETE FROM course_workflow_uploads');await actual.query('DELETE FROM admin_activity_log');await actual.query('DELETE FROM videos');await actual.query('DELETE FROM subject_purchases');await actual.query("UPDATE course_workflows SET state='DRAFT',revision=0,legacy_published=0,feedback=NULL");await actual.query('UPDATE scholar_subjects SET approved=1');await actual.query('UPDATE scholar_profile SET approved=1');await actual.query("INSERT INTO videos(id,subject_id,scholar_user_id,sequence_index,approved,is_free,title,description,price,video_url) VALUES(101,10,7,1,0,1,'First','Synthetic',0,'https://vimeo.com/900101'),(102,10,7,2,0,0,'Second','Synthetic',1.25,'https://vimeo.com/900102')");});
+test.beforeEach(async()=>{providerState='READY';providerMode={};providerAdapter.assets.clear();blockReady=false;releaseReady=null;failAudit=false;queries=[];providerReads=0;await actual.query('DELETE FROM user_roles WHERE user_id=7');await actual.query('INSERT INTO user_roles VALUES(7,4)');await actual.query('DELETE FROM course_workflow_uploads');await actual.query('DELETE FROM admin_activity_log');await actual.query('DELETE FROM course_visibility');await actual.query('DELETE FROM videos');await actual.query('DELETE FROM subject_purchases');await actual.query("UPDATE course_workflows SET state='DRAFT',revision=0,legacy_published=0,feedback=NULL");await actual.query('UPDATE scholar_subjects SET approved=1');await actual.query('UPDATE scholar_profile SET approved=1');await actual.query("INSERT INTO videos(id,subject_id,scholar_user_id,sequence_index,approved,is_free,title,description,price,video_url) VALUES(101,10,7,1,0,1,'First','Synthetic',0,'https://vimeo.com/900101'),(102,10,7,2,0,0,'Second','Synthetic',1.25,'https://vimeo.com/900102')");});
 test('new empty course is Draft; staff see Draft uploads before submission without publication',async()=>{assert.equal((await state()).state,'DRAFT');for(const id of [3,4]){const r=await http('/operations/course-workflows',id);assert.equal(r.status,200);assert.equal(r.body.rows[0].state,'DRAFT');assert.equal(r.body.rows[0].lesson_count,2);assert.equal((await http('/operations/course-workflows/1',id)).body.videos.length,2);}assert.equal((await http('/videos/101',1)).status,404);});
+
+const visibility=(id,hidden,revision=0)=>http('/operations/course-workflows/1/visibility',id,'POST',{hidden,revision});
+test('visibility is opt-in, SuperAdmin-only and separate from publication',async()=>{
+ const before=await state();assert.equal((await actual.query('SELECT COUNT(*) AS n FROM course_visibility'))[0][0].n,0);
+ for(const id of [1,3,7])assert.equal((await visibility(id,true)).status,403);
+ const r=await visibility(4,true);assert.equal(r.status,200);assert.deepEqual(r.body,{success:true,hidden:true,revision:1});assert.deepEqual(await state(),before);
+ const list=await http('/operations/course-workflows?state=ALL',4);assert.equal(list.body.rows[0].public_hidden,1);
+ assert.equal((await visibility(4,false,1)).status,200);assert.equal((await http('/videos/101',1)).status,404,'unhide never publishes a draft');
+});
+test('published hide removes public previews but preserves entitled buyer, Scholar and staff access',async()=>{
+ await submit();await publish();const access=require('../src/services/contentAuthorization').createContentAuthorization(pool),before=await state();
+ await actual.query('INSERT INTO subject_purchases(id,buyer_user_id,subject_id,scholar_id,created_at,access_expires_at,is_access_active) VALUES(1,1,10,7,NOW(),DATE_ADD(NOW(),INTERVAL 5 MONTH),1)');
+ const financialBefore=(await actual.query('SELECT * FROM subject_purchases'))[0];
+ assert.equal((await visibility(4,true)).status,200);
+ assert.equal((await access.playback(actor(1),102)).video.can_access,true);
+ assert.equal((await http('/videos/101',8)).status,404,'nonbuyer cannot preview hidden course');
+ for(const id of [7,3,4])assert.equal((await http('/videos/102',id)).status,200);
+ assert.equal((await actual.query('SELECT COUNT(*) AS n FROM videos'))[0][0].n,2);assert.deepEqual((await actual.query('SELECT * FROM subject_purchases'))[0],financialBefore);assert.deepEqual(await state(),before);
+ await actual.query('UPDATE subject_purchases SET access_expires_at=DATE_SUB(NOW(),INTERVAL 1 DAY)');assert.equal((await http('/videos/101',1)).status,404,'expired buyer cannot use the hidden preview');
+ assert.equal((await visibility(4,false,1)).status,200);assert.equal((await http('/videos/101',8)).status,200);
+});
+test('stale revisions, duplicate actions and competing hide submissions cannot toggle visibility',async()=>{
+ const results=await Promise.all([visibility(4,true),visibility(4,true)]);assert.equal(results.filter(r=>r.status===200).length,1);assert.equal(results.filter(r=>r.status===409).length,1);
+ assert.equal((await visibility(4,false,0)).status,409);assert.equal((await visibility(4,true,1)).status,409);
+ assert.equal((await actual.query("SELECT COUNT(*) AS n FROM admin_activity_log WHERE action='COURSE_HIDE'"))[0][0].n,1);
+});
+test('visibility and audit commit atomically and service rechecks database roles',async()=>{
+ failAudit=true;assert.equal((await visibility(4,true)).status,503);assert.equal((await actual.query('SELECT COUNT(*) AS n FROM course_visibility'))[0][0].n,0);failAudit=false;
+ await assert.rejects(require('../src/services/courseVisibility').setVisibility(pool,{id:3,roles:['SuperAdmin']},1,{hidden:true,revision:0}),e=>e.status===403);
+ await actual.query('DELETE FROM user_roles WHERE user_id=4');try{assert.equal((await visibility(4,true)).status,503,'existing operations actor refuses unverifiable current roles');await assert.rejects(require('../src/services/courseVisibility').setVisibility(pool,{id:4,roles:['SuperAdmin']},1,{hidden:true,revision:0}),e=>e.status===403);}finally{await actual.query('INSERT INTO user_roles VALUES(4,3)');}
+});
+test('hidden courses stay in the entitled learning catalogue, not public discovery',async()=>{
+ await submit();await publish();await visibility(4,true);const {VideoModel}=require('../src/models/videos');
+ assert.equal((await VideoModel.getAllVideos())[0].length,0);
+ await actual.query('INSERT INTO subject_purchases(id,buyer_user_id,subject_id,scholar_id,created_at,access_expires_at,is_access_active) VALUES(1,1,10,7,NOW(),DATE_ADD(NOW(),INTERVAL 5 MONTH),1)');
+ assert.equal((await VideoModel.getAllVideos(undefined,1))[0].length,2);assert.equal((await VideoModel.getAllVideos(undefined,8))[0].length,0);
+ const r=await http('/videos/learning-catalogue',1);assert.equal(r.status,200);assert.equal(r.body.videos.length,2);assert.equal(r.body.videos[0].public_hidden,true);assert.equal(r.body.videos[0].video_url,undefined);
+});
 test('owner, live Scholar role and exact application required; client privileged roles grant nothing',async()=>{await deny(service.transition(actor(8),1,'submit'),403);await deny(service.transition(actor(1),1,'submit'),403);await actual.query('DELETE FROM user_roles WHERE user_id=7');await deny(submit(),403);assert.equal(providerReads,0);});
 test('empty, malformed ordering and unusable media cannot be declared complete',async()=>{await actual.query('DELETE FROM videos');await deny(submit(),409);await actual.query("INSERT INTO videos(id,subject_id,scholar_user_id,sequence_index,title,description,video_url) VALUES(101,10,7,1,'Lesson','', 'https://vimeo.com/123'),(102,10,7,1,'Lesson','', 'https://vimeo.com/124')");await deny(submit(),409);await actual.query("UPDATE videos SET sequence_index=2,video_url='https://evil.example/124' WHERE id=102");await deny(submit(),503);});
 test('processing, failed and unknown readiness deny submission, without holding DB connections',async()=>{for(const value of ['PROCESSING','FAILED','UNKNOWN']){providerState=value;await deny(submit(),409);assert.equal((await state()).state,'DRAFT');}});

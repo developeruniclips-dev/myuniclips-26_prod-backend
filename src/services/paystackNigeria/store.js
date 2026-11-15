@@ -31,7 +31,7 @@ function createMysqlStore({ pool, resolveHistoricalSales, schemaMetadata } = {})
                 if (rows.length !== 1) fail('OFFERING_UNAVAILABLE');
             },
             async offering(subjectId, scholarId, merchantAccount, environment) {
-                const [rows] = await query(`SELECT n.*,s.university_id,c.id AS country_id,c.code AS country_code FROM paystack_ng_offerings n
+                const [rows] = await query(`SELECT n.*,s.university_id,c.id AS country_id,c.code AS country_code,NOT (${require('../courseVisibility').publicVisibilitySql('ss')}) AS public_hidden FROM paystack_ng_offerings n
                     JOIN subjects s ON s.id=n.subject_id JOIN universities u ON u.id=s.university_id
                     JOIN countries c ON c.id=u.country_id
                     JOIN scholar_subjects ss ON ss.subject_id=s.id AND ss.scholar_user_id=n.scholar_id AND ss.approved=1
@@ -44,7 +44,7 @@ function createMysqlStore({ pool, resolveHistoricalSales, schemaMetadata } = {})
                     AND EXISTS (SELECT 1 FROM videos v WHERE v.subject_id=s.id AND v.scholar_user_id=n.scholar_id AND v.approved=1)`,
                 [subjectId, scholarId, merchantAccount, environment]);
                 if (rows.length !== 1) fail('OFFERING_UNAVAILABLE');
-                return { currency: rows[0].currency, totalMinor: number(rows[0].total_minor),
+                return { currency: rows[0].currency, totalMinor: number(rows[0].total_minor),publicHidden:Number(rows[0].public_hidden)===1,
                     entity: rows[0].entity, policyVersion: rows[0].policy_version,
                     universityId:number(rows[0].university_id),countryId:number(rows[0].country_id),countryCode:rows[0].country_code,
                     offeringRevision:number(rows[0].revision),routeRevision:'country-course-v1' };

@@ -111,18 +111,20 @@ const listVideosBySubject = async (req, res) => {
 const watchVideo = getVideo;
 
 // Get all videos
-const getAllVideos = async (req, res) => {
+const readCatalogue = async (req, res, learning=false) => {
   try {
     await catalogueReads.run(null,async()=>{
-    const page=orderedPageInput(req.query),[rows]=await VideoModel.getAllVideos(page);
+    const page=orderedPageInput(req.query),[rows]=await VideoModel.getAllVideos(page,learning?req.user.id:undefined);
     const {items,pagination}=pageRows(rows,page);requireExplicitPage(req.query,pagination);
-    const annotated=await annotateCourses(pool,items.map(publicLesson));
+    const annotated=await annotateCourses(pool,items.map(v=>({...publicLesson(v),...(learning?{public_hidden:Number(v.public_hidden)===1}:{})})));
     res.status(200).json({videos:req.query?.category==='general'?annotated.filter(v=>v.is_general_university_course):annotated,pagination});
     });
   } catch (err) {
     contentError(res,err);
   }
 };
+const getAllVideos=(req,res)=>readCatalogue(req,res);
+const getLearningVideos=(req,res)=>readCatalogue(req,res,true);
 
 // Get scholar's own videos
 const getScholarVideos = async (req, res) => {
@@ -143,7 +145,7 @@ const approveVideo = async (req, res) => {
   try {
     const videoId = Number(req.params.id);
     const { price } = req.body;
-    
+
     if (isNaN(videoId)) {
       return res.status(400).json({ message: "Invalid video ID" });
     }
@@ -164,7 +166,7 @@ const approveVideo = async (req, res) => {
       return amount;
     });
 
-    res.status(200).json({ 
+    res.status(200).json({
       message: "Video approved successfully",
       price: finalPrice
     });
@@ -178,7 +180,7 @@ const approveVideo = async (req, res) => {
 const deleteVideo = async (req, res) => {
   try {
     const videoId = Number(req.params.id);
-    
+
     if (isNaN(videoId)) {
       return res.status(400).json({ message: "Invalid video ID" });
     }
@@ -192,7 +194,7 @@ const deleteVideo = async (req, res) => {
     await withCourseLock(pool, rows[0].scholar_user_id, rows[0].subject_id, async db => {
       await db.query('DELETE FROM videos WHERE id = ?', [videoId]);
     });
-    
+
     res.status(200).json({ message: "Video deleted successfully" });
   } catch (err) {
     require('../utils/safeLogging').logError("Error deleting video:", err);
@@ -205,7 +207,7 @@ const deleteVideoByScholar = async (req, res) => {
   try {
     const videoId = Number(req.params.id);
     const scholarId = req.user.id;
-    
+
     if (isNaN(videoId)) {
       return res.status(400).json({ message: "Invalid video ID" });
     }
@@ -228,7 +230,7 @@ const deleteVideoByScholar = async (req, res) => {
       await workflow.touch(db,offering.id);await db.commit();
       }catch(error){await db.rollback();throw error;}
     });
-    
+
     res.status(200).json({ message: "Video deleted successfully" });
   } catch (err) {
     require('../utils/safeLogging').logError("Error deleting video:", err);
@@ -256,6 +258,7 @@ module.exports = {
   listVideosBySubject,
   watchVideo,
   getAllVideos,
+  getLearningVideos,
   getAllVideosAdmin,
   getLearnerCourse,
   requireCurrentScholar,

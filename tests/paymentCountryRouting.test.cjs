@@ -2,6 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const R=require('../src/services/coursePayments/routing');
 const base={id:123,scholar_id:7,university_id:55,country_id:9,university_country_code:'NG',country_occurrences:1,bundle_price:'6.00',application_approved:1,profile_approved:1,workflow_state:'PUBLISHED',has_content:1};
+test('explicit hidden flag prevents new checkout for both markets without changing prices',()=>{for(const country of ['FI','NG']){const p=R.paymentDecision({...base,university_country_code:country,public_hidden:1},{stripeReady:true});assert.equal(p.checkoutEnabled,false);assert.equal(p.unavailableCode,'OFFERING_UNAVAILABLE');assert.equal(p.amountMinor,country==='FI'?600:150000);}});
 test('university country alone routes FUNAAB/HAMK and future universities for every buyer location',()=>{
  for(const university_id of [1,55,189,987])for(const university_country_code of ['FI','NG'])for(const buyer_country of ['NG','FI','GB','US','other',null]){
   const p=R.paymentDecision({...base,university_id,university_country_code,buyer_country,ip_country:buyer_country,nationality:buyer_country,name:'Misleading university label'},{stripeReady:true});

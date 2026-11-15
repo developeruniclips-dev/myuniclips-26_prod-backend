@@ -1,5 +1,7 @@
 const {readQuery,orderedClause}=require('../utils/readCapacity');
 const { pool } = require("../config/db");
+const {publicVisibilitySql}=require('../services/courseVisibility');
+const {activeEntitlementSql}=require('../services/contentAuthorization');
 
 const VideoModel = {
   create: (scholarUserId, subjectId, title, description, videoUrl, price, isFree, sequenceIndex) =>
@@ -13,10 +15,10 @@ const VideoModel = {
 
   findByIdWithDetails: (id) => {
     return pool.query(
-      `SELECT 
-          v.*, 
-          u.fname AS scholar_fname, 
-          u.lname AS scholar_lname, 
+      `SELECT
+          v.*,
+          u.fname AS scholar_fname,
+          u.lname AS scholar_lname,
           u.email AS scholar_email,
           s.name AS subject_name
        FROM videos v
@@ -27,12 +29,12 @@ const VideoModel = {
     );
   },
 
-  getAllVideos: (page={before:2147483647,limit:100}) => {page={...page,kind:'created'};const sort=orderedClause(page,'v');return readQuery(pool,`
-    SELECT 
-      v.*, ${sort.select},
+  getAllVideos: (page={before:2147483647,limit:100},buyerId) => {page={...page,kind:'created'};const sort=orderedClause(page,'v');const visibility=publicVisibilitySql('ss');return readQuery(pool,`
+    SELECT
+      v.*, ${sort.select}, NOT (${visibility}) AS public_hidden,
       v.id=(SELECT first.id FROM videos first WHERE first.subject_id=v.subject_id AND first.scholar_user_id=v.scholar_user_id ORDER BY first.sequence_index,first.id LIMIT 1) AS is_first_preview,
-      u.fname AS scholar_fname, 
-      u.lname AS scholar_lname, 
+      u.fname AS scholar_fname,
+      u.lname AS scholar_lname,
       s.name AS subject_name,
       s.degree_programmes AS degree_programme,
       s.university_id,
@@ -40,50 +42,51 @@ const VideoModel = {
       sp.university AS scholar_university,
       sp.degree AS scholar_degree,
       ss.expertise
-    FROM videos v 
-    JOIN users u ON v.scholar_user_id = u.id 
-    JOIN subjects s ON v.subject_id = s.id 
+    FROM videos v
+    JOIN users u ON v.scholar_user_id = u.id
+    JOIN subjects s ON v.subject_id = s.id
     LEFT JOIN scholar_profile sp ON v.scholar_user_id = sp.user_id
     LEFT JOIN scholar_subjects ss ON v.subject_id = ss.subject_id AND v.scholar_user_id = ss.scholar_user_id
     JOIN course_workflows cw ON cw.offering_id=ss.id AND cw.state='PUBLISHED'
-    WHERE v.approved = 1 AND sp.approved = 1 AND ss.approved = 1 AND ${sort.where}
+    WHERE v.approved = 1 AND sp.approved = 1 AND ss.approved = 1
+      AND (${visibility}${buyerId?' OR EXISTS (SELECT 1 FROM subject_purchases access_purchase WHERE access_purchase.buyer_user_id=? AND access_purchase.subject_id=ss.subject_id AND access_purchase.scholar_id=ss.scholar_user_id AND '+activeEntitlementSql('access_purchase')+')':''}) AND ${sort.where}
     ORDER BY ${sort.order} LIMIT ?
-  `, [...sort.args,page.limit+1]);},
+  `, [...(buyerId?[buyerId]:[]),...sort.args,page.limit+1]);},
 
   // Get ALL videos for admin (including unapproved)
   getAllVideosAdmin: (page={before:2147483647,limit:100}) => {page={...page,kind:'review'};const sort=orderedClause(page,'v');return readQuery(pool,`
-    SELECT 
+    SELECT
       v.*, ${sort.select},
-      u.fname AS scholar_fname, 
-      u.lname AS scholar_lname, 
-      u.email AS scholar_email, 
+      u.fname AS scholar_fname,
+      u.lname AS scholar_lname,
+      u.email AS scholar_email,
       s.name AS subject_name,
       s.degree_programmes AS degree_programme,
       s.bundle_price,
       sp.university AS scholar_university,
       sp.degree AS scholar_degree,
       ss.expertise
-    FROM videos v 
-    JOIN users u ON v.scholar_user_id = u.id 
-    JOIN subjects s ON v.subject_id = s.id 
+    FROM videos v
+    JOIN users u ON v.scholar_user_id = u.id
+    JOIN subjects s ON v.subject_id = s.id
     LEFT JOIN scholar_profile sp ON v.scholar_user_id = sp.user_id
     LEFT JOIN scholar_subjects ss ON v.subject_id = ss.subject_id AND v.scholar_user_id = ss.scholar_user_id
     WHERE ${sort.where} ORDER BY ${sort.order} LIMIT ?
   `, [...sort.args,page.limit+1]);},
 
   findBySubjectWithDetails: (subjectId) => pool.query(`
-    SELECT 
-      v.*, 
-      u.fname AS scholar_fname, 
-      u.lname AS scholar_lname, 
-      u.email AS scholar_email, 
+    SELECT
+      v.*,
+      u.fname AS scholar_fname,
+      u.lname AS scholar_lname,
+      u.email AS scholar_email,
       s.name AS subject_name,
       sp.university,
       sp.degree,
       ss.expertise
-    FROM videos v 
-    JOIN users u ON v.scholar_user_id = u.id 
-    JOIN subjects s ON v.subject_id = s.id 
+    FROM videos v
+    JOIN users u ON v.scholar_user_id = u.id
+    JOIN subjects s ON v.subject_id = s.id
     LEFT JOIN scholar_profile sp ON v.scholar_user_id = sp.user_id
     LEFT JOIN scholar_subjects ss ON v.subject_id = ss.subject_id AND v.scholar_user_id = ss.scholar_user_id
     WHERE v.subject_id = ? AND v.approved = 1

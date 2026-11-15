@@ -20,6 +20,11 @@ function setup(initial = {}) {
     } };
     return { store,provider,service: createServices({ writerPolicy:require('./fixtures/courseWriterPolicy.cjs')(), store,provider,policy: enabled(),now: () => time }) };
 }
+test('hidden offering refuses new orders but does not strand an already initiated payment',async()=>{
+ const {store,service}=setup();const order=await service.createOrder(request());store.controls.academic={publicHidden:true};
+ await assert.rejects(service.createOrder(request(2)),e=>e.code==='OFFERING_UNAVAILABLE');
+ const result=await service.fulfill({orderId:order.id,buyerId:1});assert.equal(result.state,'fulfilled');assert.equal(store.state().purchases.length,1);assert.equal(store.state().allocations.length,1);
+});
 test('disabled by default; live context refused before DB/provider work', async () => {
     let calls = 0;
     const store = { async transaction() { calls++; } };

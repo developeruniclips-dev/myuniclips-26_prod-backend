@@ -53,7 +53,7 @@ const getMyLibrary = async (req, res) => {
     const page=orderedPageInput(req.query,'saved',50,25),sort=orderedClause(page,'ul');
     // Get one bounded course page in user's library
     const [library] = await readQuery(pool,`
-      SELECT 
+      SELECT
         ul.id,
         ul.subject_id,
         ul.scholar_id,
@@ -69,7 +69,7 @@ const getMyLibrary = async (req, res) => {
       LEFT JOIN scholar_profile sp ON ul.scholar_id = sp.user_id
       JOIN scholar_subjects ss ON ss.subject_id=ul.subject_id AND ss.scholar_user_id=ul.scholar_id
       JOIN course_workflows cw ON cw.offering_id=ss.id AND cw.state='PUBLISHED'
-      WHERE ul.user_id = ? AND sp.approved=1 AND ss.approved=1 AND ${sort.where}
+      WHERE ul.user_id = ? AND sp.approved=1 AND ss.approved=1 AND (${require('../services/courseVisibility').publicVisibilitySql('ss')} OR EXISTS (SELECT 1 FROM subject_purchases owned_access WHERE owned_access.buyer_user_id=ul.user_id AND owned_access.subject_id=ul.subject_id AND owned_access.scholar_id=ul.scholar_id AND ${require('../services/contentAuthorization').activeEntitlementSql('owned_access')})) AND ${sort.where}
       ORDER BY ${sort.order} LIMIT ?
     `, [userId,...sort.args,page.limit+1]);
     const {items,pagination}=pageRows(library,page);requireExplicitPage(req.query,pagination);
@@ -247,7 +247,7 @@ const getVideoProgress = async (req, res) => {
       return res.status(200).json({ progressSeconds: 0, watched: false });
     }
 
-    res.status(200).json({ 
+    res.status(200).json({
       progressSeconds: rows[0].progress_seconds || 0,
       watched: rows[0].watched || false
     });
