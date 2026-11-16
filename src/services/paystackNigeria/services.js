@@ -73,7 +73,7 @@ function createServices({ store, provider, policy = createPolicy(), now = Date.n
                 return o; // No hosted checkout, provider call or initiation occurs.
             });
         },
-        async fulfill({ orderId, buyerId }) {
+        async fulfill({ orderId, buyerId, expectedTransactionId }) {
             policy.assertEnabled(); uuid(orderId); id(buyerId);
             await writerPolicy.assertSafe();
             const snapshot = await store.readOrder(orderId);
@@ -85,6 +85,9 @@ function createServices({ store, provider, policy = createPolicy(), now = Date.n
             try { e = await provider.verify(snapshot.reference,snapshot); } catch(error) { if(authenticated)throw error;fail('PAYMENT_EVIDENCE_UNAVAILABLE'); }
             e = e && { ...e, feesMinor: e.feesMinor ?? null };
             receipt(snapshot,e); // Provider double settles before acquiring transaction locks.
+            // A signed event still has to describe the independently verified
+            // transaction, including when its reference names a fulfilled order.
+            if(expectedTransactionId!==undefined&&e.transactionId!==expectedTransactionId)fail('PAYMENT_EVIDENCE_MISMATCH');
             await writerPolicy.assertSafe();
             return store.transaction(async tx => {
                 // Exclusive verified-legacy mode only: serialize the entire

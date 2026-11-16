@@ -7,9 +7,9 @@ function createCheckoutService({config,ledgerStore,pool,writerPolicy,transport,t
  const provider=createProvider({config,transport,recordVerification:(o,v)=>transportStore.recordVerification(o,v),assertEligible:o=>transportStore.assertEligible(o)});
  const ledger=createServices({store:ledgerStore,provider,policy:createPolicy({enabled:true,environment:config.environment,merchantAccount:config.merchantAccount,configuration:config}),writerPolicy});
  async function inspect(subjectId,scholarId){config.assert(config.environment==='live'?'liveCheckout':'testCheckout');config.assert('verification');config.assertScope?.(subjectId,scholarId);return ledger.inspectOffering(subjectId,scholarId);}
- async function verifyOrder(orderId,buyerId){
+ async function verifyOrder(orderId,buyerId,expectedTransactionId){
   config.assert('verification');await writerPolicy.assertSafe();
-  try{await ledger.fulfill({orderId,buyerId});}
+  try{await ledger.fulfill({orderId,buyerId,expectedTransactionId});}
   catch(e){
    if(e.paymentState||e.code==='PAYSTACK_PAYMENT_REVIEW_REQUIRED')return transportStore.status(orderId,buyerId);
    const review=/^(BASELINE_|INVALID_SALE_PROOF|ORDER_CONTEXT_|ORDER_REQUIRES_REVIEW|ORDER_STATE_CHANGED|OFFERING_|REPURCHASE_|PAYMENT_TIME_|PAYMENT_EVIDENCE_MISMATCH|PAYSTACK_EVENT_REVIEW_REQUIRED)/.test(e.code||'');
@@ -42,7 +42,7 @@ function createCheckoutService({config,ledgerStore,pool,writerPolicy,transport,t
    return budget.run(null,async()=>{
     const saved=await transportStore.recordEvent(claim);
     if(saved.review||saved.processed)return {received:true,state:saved.review?'review':'processed'};
-    const result=await verifyOrder(saved.orderId,saved.buyerId),state=result.state==='fulfilled'?'processed':result.state==='review'?'review':'pending';
+    const result=await verifyOrder(saved.orderId,saved.buyerId,claim.transactionId),state=result.state==='fulfilled'?'processed':result.state==='review'?'review':'pending';
     await transportStore.completeEvent(claim.key,state);if(state==='pending')fail('PAYSTACK_VERIFICATION_PENDING');return {received:true,state};
    });
   },

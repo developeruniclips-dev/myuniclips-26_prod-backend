@@ -47,7 +47,11 @@ function createTransportStore({pool,config}={}){
    if(conflict)await query(db,"UPDATE paystack_ng_events SET state='review',error_code='PAYSTACK_EVENT_CONFLICT' WHERE merchant_account=? AND environment=? AND event_key=?",[config.merchantAccount,environment,event.key]);
    return {orderId:o?.id,buyerId:o&&Number(o.buyer_id),processed:existing[0]?.state==='processed',review:!!unsafe||!o||existing[0]?.state==='review'};
   });},
-  async completeEvent(key,state,code=null){return transaction(db=>query(db,"UPDATE paystack_ng_events SET state=?,error_code=?,processed_at=IF(? IN ('processed','review'),UTC_TIMESTAMP(),NULL) WHERE merchant_account=? AND environment=? AND event_key=? AND state<>'review'",[state,code,state,config.merchantAccount,environment,key]));},
+  async completeEvent(key,state,code=null){
+   if(!['processed','review','pending'].includes(state))fail('PAYSTACK_EVENT_STATE_INVALID');
+   // A slower concurrent attempt must not downgrade a terminal inbox state.
+   return transaction(db=>query(db,"UPDATE paystack_ng_events SET state=?,error_code=?,processed_at=IF(? IN ('processed','review'),UTC_TIMESTAMP(),NULL) WHERE merchant_account=? AND environment=? AND event_key=? AND state IN ('received','pending')",[state,code,state,config.merchantAccount,environment,key]));
+  },
  };
 }
 module.exports={createTransportStore};
