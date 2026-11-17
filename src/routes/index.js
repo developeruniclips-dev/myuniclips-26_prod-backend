@@ -16,6 +16,7 @@ const twoFactorRoutes = require('./twoFactorRoutes');
 
 const routes = Router();
 routes.use('/course-payments',require('./coursePaymentRoutes'));
+routes.use('/scholar-payout-details',require('./scholarBankRoutes').productionRouter());
 
 routes.use("/users", userRoutes);
 routes.use("/auth", authRouter);
